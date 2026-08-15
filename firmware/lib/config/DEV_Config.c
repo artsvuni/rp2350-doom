@@ -79,6 +79,22 @@ uint8_t DEV_I2C_ReadByte(uint8_t addr, uint8_t reg)
     return buf;
 }
 
+void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value)
+{
+    DEV_I2C_Write(addr, reg, Value);
+}
+
+uint8_t DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg)
+{
+    return DEV_I2C_ReadByte(addr, reg);
+}
+
+void DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len)
+{
+    i2c_write_blocking(I2C_PORT, addr, &reg, 1, true);
+    i2c_read_blocking(I2C_PORT, addr, pData, Len, false);
+}
+
 /**
  * GPIO Mode
 **/
@@ -120,6 +136,9 @@ void DEV_GPIO_Init(void)
     gpio_init(PA_CTRL);
     gpio_set_dir(PA_CTRL, GPIO_OUT);
     gpio_put(PA_CTRL, 1);
+
+    gpio_init(Touch_RST_PIN);
+    gpio_set_dir(Touch_RST_PIN, GPIO_OUT);
 }
 
 /******************************************************************************

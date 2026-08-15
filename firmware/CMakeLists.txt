@@ -18,6 +18,7 @@ target_sources(doom_firmware PRIVATE
 
 add_subdirectory(lib/config)
 add_subdirectory(lib/pwr_button)
+add_subdirectory(lib/touch)
 add_subdirectory(lib/qspi_pio)
 add_subdirectory(lib/amoled)
 add_subdirectory(lib/gui)
@@ -27,6 +28,7 @@ add_subdirectory(lib/display)
 include_directories(./lib/config)
 include_directories(./lib/button)
 include_directories(./lib/pwr_button)
+include_directories(./lib/touch)
 include_directories(./lib/qspi_pio)
 include_directories(./lib/amoled)
 include_directories(./lib/gui)
@@ -36,6 +38,7 @@ include_directories(./lib/display)
 target_link_libraries(doom_firmware PRIVATE
     config
     pwr_button
+    touch
     display
     pico_stdlib
     hardware_i2c

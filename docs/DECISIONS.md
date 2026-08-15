@@ -87,6 +87,56 @@ space once the actual game-view layout is decided. (Earlier note about
 could sit, not a suggestion to move the touch zones there instead of
 where sketched - these are independent, both stand.)
 
+## 2026-08-15 — Touch d-pad calibrated on hardware: landscape, asymmetric zones
+Supersedes the "no rotation needed" note above - after seeing a real
+mockup with the game view in landscape, Alexander wants the game rendered
+landscape (`Paint_SetRotate(ROTATE_90)`), not native portrait. Confirmed
+safe: GUI_Paint's `Paint_SetPixel` already transforms logical (rotated)
+coordinates to physical panel coordinates for every draw call, so no
+display-driver changes were needed - just enable rotation and use
+`Paint.Width`/`Paint.Height` (now swapped: 448x368) instead of the raw
+panel dimensions for centering math.
+
+**Touch coordinates needed their own transform.** The FT3168 touch
+controller has no concept of our software rotation - it always reports
+raw coordinates in the native portrait frame. `touch_to_logical()` applies
+the inverse of `Paint_SetPixel`'s ROTATE_90 transform
+(`logical_x=raw_y, logical_y=PANEL_WIDTH-raw_x-1`) so zone hit-testing can
+work in the same logical landscape space the visual layout is designed in.
+Confirmed correct empirically: asked Alexander which edge of the rotated
+view was physically closest to the buttons, and it matched the transform's
+prediction.
+
+**Zone layout went through several rounds of on-hardware tuning**, each a
+full build-flash-test cycle with serial logging of raw+logical touch
+coordinates for calibration data:
+1. Started as a simple 3x3 grid (edge cells = zones, corners/center dead).
+2. Alexander asked to remove the UP/DOWN dead zone - simplified to
+   LEFT/RIGHT as side columns, UP/DOWN splitting the middle column exactly
+   in half.
+3. First attempt at UP/DOWN vertical assignment was backwards - fixed by
+   testing which produced the button-adjacent zone Alexander expected.
+4. Several "shift the whole group down by N%" adjustments (`DPAD_Y0`
+   84->97->112->129->155->186) - simple, fast iteration once the
+   direction was confirmed. The last shift intentionally pushes the zone
+   past the visible canvas bottom; the DOWN zone's reachable area just
+   naturally shrinks since touch can't register off-panel - matches
+   Alexander's sketch (DOWN drawn shorter than UP) with no extra code.
+5. Final layout replaced the uniform grid entirely: Alexander provided a
+   sketch overlaid on an actual landscape gameplay screenshot showing an
+   asymmetric layout - LEFT and DOWN hugging the physical screen edges (so
+   a resting hand barely moves to find them by feel), UP and RIGHT sized
+   deliberately larger (used more often, costlier to mistap). Implemented
+   as four independently-sized rectangles (`zones[]` in `firmware/main.c`)
+   rather than forcing it back into a grid.
+
+**Alexander's idea, not yet built**: keep this calibration test reachable
+as a debug overlay once the real game exists, rather than throwing it
+away - so zone tuning can continue by feel during actual gameplay instead
+of only in isolation. Worth revisiting once we understand the game's
+render loop structure well enough to know where an overlay would hook in;
+premature to design that now.
+
 ## Open questions
 - BOOT long-press conflict (bootloader-entry vs in-game menu) - not yet
   resolved, see above.

@@ -53,6 +53,8 @@
 #define ES8311_SDA_PIN  6
 #define ES8311_SCL_PIN  7
 #define PA_CTRL         19
+#define Touch_RST_PIN   5
+#define Touch_INT_PIN   4
 
 // Used by the AMOLED driver (firmware/lib/amoled) for its QSPI image transfers.
 extern uint dma_tx;
@@ -76,6 +78,12 @@ void DEV_Delay_us(UDOUBLE xus);
 void DEV_I2C_Write(uint8_t addr, uint8_t reg, uint8_t Value);
 void DEV_I2C_Write_nByte(uint8_t addr, uint8_t *pData, uint32_t Len);
 uint8_t DEV_I2C_ReadByte(uint8_t addr, uint8_t reg);
+
+// Aliases/additions for FT3168 touch driver compatibility (it uses this
+// naming instead of the ES8311-example naming above).
+void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value);
+uint8_t DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg);
+void DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len);
 
 void DEV_SET_PWM(uint8_t Value);
 

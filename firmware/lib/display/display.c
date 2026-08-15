@@ -31,7 +31,10 @@ void display_init(void)
 
     Paint_NewImage((UBYTE *)framebuffer, AMOLED_1IN8.WIDTH, AMOLED_1IN8.HEIGHT, 0, WHITE);
     Paint_SetScale(65);
-    Paint_SetRotate(ROTATE_0);
+    // Landscape: physical buttons are on the panel's native left edge, so
+    // after this rotation they end up effectively "on top" relative to
+    // the rotated image - see docs/DECISIONS.md.
+    Paint_SetRotate(ROTATE_90);
     Paint_Clear(WHITE);
     AMOLED_1IN8_Display(framebuffer);
 }
@@ -42,8 +45,8 @@ void display_show_state(bool playing)
 
     const char *text = playing ? "PAUSE" : "PLAY";
     uint16_t text_width = strlen(text) * Font24.Width;
-    uint16_t x = (AMOLED_1IN8.WIDTH - text_width) / 2;
-    uint16_t y = (AMOLED_1IN8.HEIGHT - Font24.Height) / 2;
+    uint16_t x = (Paint.Width - text_width) / 2;
+    uint16_t y = (Paint.Height - Font24.Height) / 2;
 
     Paint_Clear(WHITE);
     Paint_DrawString_EN(x, y, text, &Font24, BLACK, WHITE);
@@ -54,10 +57,10 @@ void display_show_lines(const char *line1, const char *line2)
 {
     if (!framebuffer) return;
 
-    uint16_t x1 = (AMOLED_1IN8.WIDTH - strlen(line1) * Font24.Width) / 2;
-    uint16_t x2 = (AMOLED_1IN8.WIDTH - strlen(line2) * Font24.Width) / 2;
-    uint16_t y1 = AMOLED_1IN8.HEIGHT / 2 - Font24.Height - 8;
-    uint16_t y2 = AMOLED_1IN8.HEIGHT / 2 + 8;
+    uint16_t x1 = (Paint.Width - strlen(line1) * Font24.Width) / 2;
+    uint16_t x2 = (Paint.Width - strlen(line2) * Font24.Width) / 2;
+    uint16_t y1 = Paint.Height / 2 - Font24.Height - 8;
+    uint16_t y2 = Paint.Height / 2 + 8;
 
     Paint_Clear(WHITE);
     Paint_DrawString_EN(x1, y1, line1, &Font24, BLACK, WHITE);
