@@ -76,6 +76,17 @@ or would lose the race) - it showed "LONG" on screen and kept running.
 This fully de-risks the input layer of the control scheme above. Risk #2
 (BOOT long-press conflict) is still open.
 
+## 2026-08-15 — Confirmed: screen orientation and touch zone layout
+Display is native portrait (368×448) - no rotation needed, matches how
+the button-test text already renders. Touch zones for movement (UP/DOWN/
+LEFT/RIGHT) go bottom-left exactly per Alexander's sketch - invisible hit-
+regions only, no visible overlay graphics drawn, regardless of whether
+that screen region ends up over rendered game pixels or blank letterbox
+space once the actual game-view layout is decided. (Earlier note about
+"leftover space below the game view" was about where the *game view*
+could sit, not a suggestion to move the touch zones there instead of
+where sketched - these are independent, both stand.)
+
 ## Open questions
 - BOOT long-press conflict (bootloader-entry vs in-game menu) - not yet
   resolved, see above.
