@@ -137,9 +137,66 @@ of only in isolation. Worth revisiting once we understand the game's
 render loop structure well enough to know where an overlay would hook in;
 premature to design that now.
 
+## 2026-08-15 — Engine cloned and verified; adaptation boundary confirmed
+Cloned `kilograham/rp2040-doom` and `raspberrypi/pico-extras` (both
+external dependencies, gitignored - see below for how to re-fetch).
+Installed SDL2 (+mixer, +net) via Homebrew for the desktop verification
+build.
+
+**Desktop `chocolate-doom` target builds clean** (two trivial unused-
+variable warnings only) and actually runs - confirmed via process CPU
+usage (~13%, consistent with a live render loop) rather than a visible
+window, since this Mac's shell sandbox has no GUI/display access for
+screenshotting a spawned SDL window. Good enough confirmation the
+codebase itself is sound before touching RP2350-specific code, matching
+upstream's own stated verification approach.
+
+**RP2350 (`PICO_BOARD=pico2`) build of `doom_tiny_nost`** (the non-USB,
+larger-WAD-capable target - no USB keyboard needed since we're using our
+own button/touch input) configures cleanly and gets most of the way
+through compiling before failing on exactly two files:
+`src/i_main.c` (references `PICO_AUDIO_I2S_DATA_PIN` etc., pin macros
+meant to come from a custom VGA-board header we don't have, since we're
+not using their VGA/I2S hardware) and `src/pico/i_picosound.c` /
+`src/pico/i_video.c` (pico-extras' `pico_audio_i2s`/`pico_scanvideo_dpi`
+libraries hit an RP2350 hardware errata (RP2350-E2) spinlock safety check
+that needs an explicit `PICO_AUDIO_RP2350_OVERLAY_SDK_SPINLOCKS=1` /
+`PICO_SCANVIDEO_RP2350_OVERLAY_SDK_SPINLOCKS=1` define to satisfy).
+
+**Both failures are in exactly the two files we already planned to
+replace** with our own AMOLED display and ES8311/PIO audio drivers - every
+other file (game logic, WAD loading, rendering math, sound mixing,
+`tables.c`, `w_wad.c`, `p_*.c`, etc.) compiled cleanly for the RP2350 ARM
+target before that point. This confirms the adaptation boundary is
+exactly where expected: only `i_video.c`/`i_picosound.c`/relevant bits of
+`i_main.c` need real changes; the rest of the engine is untouched. Didn't
+bother getting their stock VGA/I2S config building first (would need a
+custom board header + the spinlock overlay flags) since that's throwaway
+effort for files we're deleting anyway - moving straight to writing our
+own replacements instead.
+
+**Repo hygiene**: `engine/rp2040-doom/` (2.2GB+ cloned repo, mostly a
+`tinyusb` submodule we don't need for this target) and `engine/wads/`
+(WAD files - copyrighted game data, not ours to redistribute even for the
+free shareware one) are both gitignored, not committed. To reproduce:
+```
+git clone --depth 1 --recurse-submodules --shallow-submodules \
+  https://github.com/kilograham/rp2040-doom.git engine/rp2040-doom
+git clone --depth 1 --recurse-submodules --shallow-submodules \
+  https://github.com/raspberrypi/pico-extras.git ~/pico/pico-extras
+```
+Shareware `doom1.wad` (free, id Software-authorized distribution since
+1993) is currently at
+`https://raw.githubusercontent.com/Akbar30Bill/DOOM_wads/master/doom1.wad`
+(4,196,020 bytes - verify size/hash if re-fetching, third-party mirrors
+can disappear or change). Alexander's own retail WAD should replace this
+once we're past bring-up.
+
 ## Open questions
 - BOOT long-press conflict (bootloader-entry vs in-game menu) - not yet
   resolved, see above.
 - Exact AXP2101 long-press duration threshold - observed to work, exact
   timing not measured or found in a quick datasheet pass. Not blocking;
   revisit only if it turns out to feel wrong in actual play.
+- Writing the actual `i_video.c` (AMOLED) and `i_picosound.c`
+  (ES8311/PIO) replacements - not started yet, next milestone.
