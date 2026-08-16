@@ -701,7 +701,7 @@ void G_DoLoadLevel (void)
     int             i;
 
 #if PICO_ON_DEVICE
-    bootlog_print("nl1: G_DoLoadLevel entered");
+    { char buf[40]; snprintf(buf, sizeof(buf), "nl1: G_DoLoadLevel free=%d", Z_FreeMemory()); bootlog_print(buf); }
 #endif
     // Set the sky map.
     // First thing, we have a dummy sky texture name,
@@ -2003,7 +2003,7 @@ G_DeferedInitNew
 void G_DoNewGame(boolean net)
 {
 #if PICO_ON_DEVICE
-    bootlog_print("ng1: G_DoNewGame entered");
+    { char buf[40]; snprintf(buf, sizeof(buf), "ng1: G_DoNewGame free=%d", Z_FreeMemory()); bootlog_print(buf); }
 #endif
     demoplayback = false;
     netdemo = false;
@@ -2037,7 +2037,7 @@ G_InitNew
   int		map )
 {
 #if PICO_ON_DEVICE
-    bootlog_print("ng3: G_InitNew entered");
+    { char buf[40]; snprintf(buf, sizeof(buf), "ng3: G_InitNew free=%d", Z_FreeMemory()); bootlog_print(buf); }
 #endif
     texturename_t skytexturename;
     int             i;

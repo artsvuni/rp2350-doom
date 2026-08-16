@@ -12,25 +12,23 @@
 #include "pico/mutex.h"
 #include <string.h>
 
-#define BOOTLOG_HEIGHT 90 // 5 lines. Tried growing this further to a
-                          // full-panel, many-DMA-transfers-per-print
-                          // design (2026-08-16) to show much more
-                          // history at once - that froze boot itself,
-                          // very early, most likely the same AMOLED
-                          // timing flakiness found earlier this session
-                          // with AMOLED_1IN8_DisplayWindows()'s per-row
-                          // loop, just newly exposed by doing many rapid
-                          // sequential transfers per call instead of one.
-                          // Reverted back to this single-buffer, single-
-                          // transfer-per-print design, which reliably
-                          // reproduces the actual target bug without
-                          // introducing a new one. See DECISIONS.md.
-#define LINE_HEIGHT (Font16.Height + 2)
-// Font16.Height is a runtime struct member access (Font16 is extern), not
-// a real compile-time constant - fine for the runtime arithmetic below,
-// but invalid as a static array's dimension. Font16 is a fixed 16px font
-// (see lib/fonts/font16.c) - hardcode that fact here instead.
-#define HISTORY_LINES (BOOTLOG_HEIGHT / (16 + 2)) // = 5
+// Font12 (smaller than the Font16 used before) so more lines fit in the
+// same screen space. Still the single-buffer, single-DMA-transfer-per-
+// print design - a full-panel/many-transfers-per-print redesign was
+// tried and reverted (2026-08-16, see DECISIONS.md): froze boot itself,
+// most likely the same AMOLED DMA timing flakiness found earlier this
+// session with AMOLED_1IN8_DisplayWindows()'s per-row loop, newly
+// exposed by doing many rapid sequential transfers per call.
+#define LINE_HEIGHT (Font12.Height + 2)
+// Font12.Height is a runtime struct member access (Font12 is extern),
+// not a real compile-time constant - fine for the runtime arithmetic
+// below, but invalid as a static array's dimension. Font12 is a fixed
+// 12px font (see lib/fonts/font12.c) - hardcode that fact here instead.
+// Back to 7 (2026-08-16 cont'd): panel_window is re-enabled now that the
+// zone-corruption bug is fixed (see DECISIONS.md), so its 128000 bytes
+// are no longer available for a bigger on-screen history.
+#define HISTORY_LINES 7
+#define BOOTLOG_HEIGHT (HISTORY_LINES * (12 + 2)) // = 98
 #define MSG_MAXLEN 40
 
 // Full panel width (matches the buffer's natural stride - no repacking
@@ -113,7 +111,7 @@ void bootlog_print(const char *msg)
     Paint_Clear(WHITE);
     int start = HISTORY_LINES - history_count;
     for (int i = start; i < HISTORY_LINES; i++) {
-        Paint_DrawString_EN(2, (i - start) * LINE_HEIGHT, history[i], &Font16, BLACK, WHITE);
+        Paint_DrawString_EN(2, (i - start) * LINE_HEIGHT, history[i], &Font12, BLACK, WHITE);
     }
     AMOLED_1IN8_DisplayWindowPacked(0, 0, AMOLED_1IN8_WIDTH, BOOTLOG_HEIGHT, fb);
 

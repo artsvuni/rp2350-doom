@@ -476,7 +476,8 @@ static void I_Pico_UpdateSound(void)
 #if PICO_ON_DEVICE
     if (first_mix) { snprintf(mbuf, sizeof(mbuf), "as6:#%d aft out", mix_call_num); bootlog_print(mbuf); }
 #endif
-    free(frames);
+    // frames now points into data_treating()'s static buffer, not the
+    // heap (2026-08-16, see DECISIONS.md) - no free() needed or valid.
     mutex_exit(&update_sound_mutex);
 #if PICO_ON_DEVICE
     if (first_mix) { snprintf(mbuf, sizeof(mbuf), "as7:#%d released", mix_call_num); bootlog_print(mbuf); }

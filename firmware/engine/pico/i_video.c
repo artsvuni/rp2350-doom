@@ -62,6 +62,9 @@
 #include "v_video.h"
 #include "w_wad.h"
 #include "z_zone.h"
+#if PICO_ON_DEVICE
+#include "bootlog.h"
+#endif
 
 #include "pico/multicore.h"
 #include "pico/sync.h"
@@ -585,6 +588,14 @@ static void new_frame_stuff(void) {
 // bootlog's own window) is never explicitly cleared by anything - it's
 // whatever was on the panel before. Cosmetic; fine for bring-up, revisit
 // once something is actually rendering.
+// Re-enabled (2026-08-16 cont'd): was temporarily disabled (panel_window's
+// 128000 bytes freed for a bigger bootlog history) while chasing the
+// zone-corruption bug. Root cause found and fixed (audio_pio.c's
+// data_treating() was calloc()'ing into the same address range the zone
+// manually claims from __end__ - see DECISIONS.md) - back to presenting
+// real frames.
+#define PRESENT_FRAME_TO_AMOLED_DISABLED 0
+#if !PRESENT_FRAME_TO_AMOLED_DISABLED
 static UWORD panel_window[SCREENHEIGHT * SCREENWIDTH];
 
 static inline void blit_row_rotated90(const uint16_t *row, int doom_y) {
@@ -593,8 +604,10 @@ static inline void blit_row_rotated90(const uint16_t *row, int doom_y) {
         panel_window[base + (uint32_t)x * SCREENHEIGHT] = __builtin_bswap16(row[x]);
     }
 }
+#endif
 
 static void present_frame_to_amoled(void) {
+#if !PRESENT_FRAME_TO_AMOLED_DISABLED
     uint32_t row_buf[SCREENWIDTH / 2]; // 2 pixels/word, matches scanline_func_*/draw_vpatch's dest convention
 
     for (int scanline = 0; scanline < SCREENHEIGHT; scanline++) {
@@ -634,6 +647,7 @@ static void present_frame_to_amoled(void) {
     AMOLED_1IN8_DisplayWindowPacked(DOOM_VIEW_Y_OFFSET, DOOM_VIEW_X_OFFSET,
                                      DOOM_VIEW_Y_OFFSET + SCREENHEIGHT, DOOM_VIEW_X_OFFSET + SCREENWIDTH,
                                      panel_window);
+#endif
 }
 
 // core1: keeps pd_core1_loop() (core1's half of the per-frame render
@@ -646,7 +660,38 @@ static void core1(void) {
     sem_release(&core1_launch);
     while (true) {
         pd_core1_loop();
+#if PICO_ON_DEVICE
+        // Bisecting core1's per-frame work (2026-08-16 cont'd): the zone
+        // list breaks during the first D_RunFrame() tic on core0 even
+        // though zero Z_Malloc calls happen in that window (confirmed:
+        // zm#1 is the only ever call, and it's clean, from P_Init long
+        // before the loop starts) - so something writes into zone
+        // memory directly, not through the allocator API. core1 runs
+        // concurrently every frame via this same loop; bracket its two
+        // halves once each to see which (if either) breaks it first.
+        // See DECISIONS.md.
+        {
+            static boolean printed;
+            if (!printed) {
+                printed = true;
+                char buf[40];
+                snprintf(buf, sizeof(buf), "c1a: after core1_loop free=%d", Z_FreeMemory());
+                bootlog_print(buf);
+            }
+        }
+#endif
         new_frame_stuff();
+#if PICO_ON_DEVICE
+        {
+            static boolean printed2;
+            if (!printed2) {
+                printed2 = true;
+                char buf[40];
+                snprintf(buf, sizeof(buf), "c1b: after frame_stuff free=%d", Z_FreeMemory());
+                bootlog_print(buf);
+            }
+        }
+#endif
         present_frame_to_amoled();
     }
 }
@@ -664,7 +709,9 @@ void I_InitGraphics(void)
     QSPI_4Wrie_Mode(&qspi);
     AMOLED_1IN8_Init();
     AMOLED_1IN8_SetBrightness(100);
+#if !PRESENT_FRAME_TO_AMOLED_DISABLED
     memset(panel_window, 0, sizeof(panel_window));
+#endif
 
     stbar = resolve_vpatch_handle(VPATCH_STBAR);
     sem_init(&render_frame_ready, 0, 2);

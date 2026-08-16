@@ -559,9 +559,95 @@ observed, since attention was on the later freeze point when this build
 was tested. Next step: watch for a "stuck" message immediately at boot/
 title-screen time, before touching the menu at all.
 
+## 2026-08-16 (cont'd) — Zone corruption root-caused and fixed: a stray `calloc()` was colliding with the manually-claimed zone
+
+Continuing straight from the previous entry. Bisected the corruption
+point using a sequence of one-shot bootlog checkpoints (`Z_FreeMemory()`
+calls bracketing progressively smaller windows of execution), each round
+narrowing the search:
+
+1. A checkpoint right at `D_StartGameLoop` (before any menu interaction)
+   came back clean (`free=8172`/`22504` depending on build) - the
+   corruption does *not* predate the game loop.
+2. A checkpoint right after the very first `D_RunFrame()` tic (before any
+   button press) was *already* corrupted - so it happens within a single
+   frame of idle title-screen ticking, not from menu navigation.
+3. Instrumented `Z_Malloc()` itself to print every call: `zm#1` (the
+   *only* allocation that ever happens, tag=`PU_STATIC`, 136 bytes,
+   during `P_Init`) is clean and is the last real allocation before the
+   corruption - ruling out the allocator's own bookkeeping entirely.
+4. Bracketed core1's per-frame work (`pd_core1_loop()`/`new_frame_stuff()`)
+   - already corrupted by the time core1 does its first real work, and
+   core1 only starts rendering *after* core0 signals a frame is ready, so
+   the break necessarily happens on **core0**, before core1 does anything.
+5. Bracketed each step inside `D_RunFrame()` itself
+   (`I_StartFrame`/`TryRunTics`/`S_UpdateSounds`/`D_Display`): clean after
+   `TryRunTics`, broken immediately after `S_UpdateSounds()`.
+
+**Root cause**: `S_UpdateSounds()` calls `I_UpdateSound()` unconditionally
+every frame (regardless of `DEBUG_NO_SOUND` or whether any channel is
+actually playing), which dispatches to `I_Pico_UpdateSound()`
+(`engine/pico/i_picosound.c`), which *always* calls
+`data_treating()` (`lib/audio_pio/audio_pio.c`, ported from mp3player) to
+convert the mix buffer - and `data_treating()` called `calloc()`. That's
+the **only** malloc-family call anywhere in the doom firmware. Meanwhile
+`i_system.c`'s `AutoAllocMemory()` sets the DOOM_TINY zone's base
+address directly to the linker's `&__end__` symbol (not via `malloc()`),
+with a comment noting "we have set heap size to 0, so `__end__` is a good
+value" - an assumption that held right up until this `calloc()` was
+introduced. newlib's `_sbrk()`-backed heap *also* starts handing out
+memory from `__end__`, so the very first `calloc()` call handed back
+memory starting at the exact same address as the zone's own first block
+header, silently overwriting DOOM's own bookkeeping there. One call was
+enough to permanently corrupt the list (matches every symptom observed:
+the "stuck" signature was stable/deterministic from the first check
+onward, never got progressively worse, and needed zero further
+allocations to reproduce).
+
+This is very likely *also* the true cause of the original menu-freeze
+bug from earlier the same day (the one `DEBUG_NO_SOUND=1` was a stopgap
+for) - `I_UpdateSound()`'s call chain into `data_treating()` runs
+unconditionally on every frame regardless of that flag, so the collision
+would have happened on the very first frame either way.
+
+**Fix**: changed `data_treating()` to write into a `static int32_t
+samples[512]` buffer instead of `calloc()`ing (the only caller always
+passes a fixed length, `MIX_BUFFER_SAMPLES`=512) and removed the now-
+invalid `free(frames)` call in `i_picosound.c`. Confirmed on hardware:
+zone stays clean (`free=` value constant, no `stuck`) through title
+screen, full menu navigation, and `P_SetupLevel()` completing entirely
+(`BlockMap`/`Vtx`/`Sect`/`Side`/`Line`/`Sub`/`Node`/`Seg`/`GroupLines`/
+`Reject`/`LoadThings`/`SpawnSpecials` all OK) - the level loads
+successfully for the first time this session.
+
+Diagnostic instrumentation added along the way and **not yet cleaned
+up**: `bootlog`'s history grew from 3→7→18 lines and back down to 7 (18
+was only affordable while `i_video.c`'s `present_frame_to_amoled()`/
+`panel_window` were temporarily disabled - see that commit - to free
+128000 bytes; both are restored now that the corruption is fixed).
+`Z_FreeMemory()`'s "stuck" guard now only prints once per boot (was
+spamming the same line every call once broken). Many one-shot/capped
+checkpoints (`zm#`, `mr#`, `rf#`, `c1a`/`c1b`, `21`/`21b`) remain scattered
+across `z_zone.c`, `m_menu.c`, `d_main.c`, `i_video.c` - safe to leave (all
+bounded, won't spam indefinitely) but should be stripped once the port
+stabilizes.
+
+**New, separate freeze found immediately after**: with real rendering
+re-enabled, starting a game now freezes partway through `P_LoadThings()`
+- confirmed stuck right after thing index 48 (doomednum 2035, the first
+exploding barrel) out of 138. This did *not* happen when rendering was
+disabled (the same exact loop completed cleanly then), so it's suspected
+to be a core0/core1 timing or rendezvous issue exposed by real rendering
+load, not a repeat of the zone corruption above. A bracket checkpoint
+around that specific `P_SpawnMapThing(48)` call was added but not yet
+tested on hardware. Next session should start here.
+
 ## Open questions
-- Where/when the zone list actually gets corrupted (see above) - the
-  real remaining question for the level-load freeze.
+- **Thing-spawn freeze with real rendering enabled** (see immediately
+  above) - the current blocker, not yet root-caused. Freezes inside or
+  immediately after spawning thing #48 (first exploding barrel, doomednum
+  2035) during `P_LoadThings()`. Suspect core0/core1 timing, since the
+  identical code path is clean with rendering disabled.
 - Making the audio path non-blocking (see above) - the real fix,
   not yet attempted. `DEBUG_NO_SOUND=1` is a working stopgap.
 - Touch/PWR input not being detected at all (see above) - next thing to

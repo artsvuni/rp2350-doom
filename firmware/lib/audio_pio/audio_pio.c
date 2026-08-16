@@ -19,7 +19,21 @@ void set_mclk_frequency(uint32_t mclk_freq)
 
 int32_t *data_treating(const int16_t *audio, uint32_t len)
 {
-    int32_t *samples = (int32_t *)calloc(len, sizeof(int32_t));
+    // Static, not calloc'd (2026-08-16, see doom/docs/DECISIONS.md): this
+    // is the ONLY malloc-family call anywhere in the doom firmware, and
+    // it was corrupting the DOOM_TINY zone allocator on the very first
+    // call. i_system.c's AutoAllocMemory() claims all RAM from the
+    // linker's __end__ symbol onward for the zone, on the assumption
+    // that "heap size is set to 0" (see i_system.c comment) so nothing
+    // else will ever call malloc(). newlib's sbrk-based heap also starts
+    // at __end__, so this calloc() handed out memory starting at the
+    // exact same address as the zone's own first block header - one
+    // call was enough to permanently corrupt it, well before any level
+    // ever loads. The only caller passes a fixed len (i_picosound.c's
+    // MIX_BUFFER_SAMPLES, 512) - a static buffer avoids the heap
+    // entirely, matching every other buffer in this codebase.
+    static int32_t samples[512];
+    if (len > count_of(samples)) len = count_of(samples);
     for (uint32_t i = 0; i < len; i++)
     {
         if (pico_audio.channel_count == 1)

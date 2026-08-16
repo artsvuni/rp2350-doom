@@ -517,10 +517,39 @@ void P_LoadThings (int lump)
 	spawnthing.options = SHORT(mt->options);
 #endif
 
+#if PICO_ON_DEVICE
+    // Bisecting a NEW freeze (2026-08-16 cont'd): unlike the zone-
+    // corruption bug (fixed - see DECISIONS.md), this one only appears
+    // once real rendering (present_frame_to_amoled) is re-enabled - it
+    // ran clean through this exact loop with rendering disabled. Print
+    // progress through the things list to see whether it's stuck on a
+    // specific thing/type, or never even starts.
+    {
+        // Narrowed (2026-08-16 cont'd) to i=35..60: last confirmed print
+        // was th#40, next expected was th#60 which never appeared - dense
+        // coverage of that window to pin the exact stuck index/type.
+        static int print_count;
+        if (print_count < 30 && i >= 35 && i <= 60) {
+            print_count++;
+            char buf[32];
+            snprintf(buf, sizeof(buf), "th#%d/%d type=%d", i, numthings, (int)SHORT(mt->type));
+            bootlog_print(buf);
+        }
+    }
+#endif
 #if !SHRINK_MOBJ
 	P_SpawnMapThing(spawnthing);
 #else
+#if PICO_ON_DEVICE
+    // th#48 (type=2035, the first exploding barrel) is where the freeze
+    // happens - bracket this exact call to confirm it hangs inside
+    // P_SpawnMapThing/P_SpawnMobj itself, vs. somewhere else entirely.
+    if (i == 48) bootlog_print("sm1: before P_SpawnMapThing(48)");
+#endif
     P_SpawnMapThing(i);
+#if PICO_ON_DEVICE
+    if (i == 48) bootlog_print("sm2: after P_SpawnMapThing(48)");
+#endif
 #endif
 
     }

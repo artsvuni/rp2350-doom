@@ -435,6 +435,27 @@ Z_MallocNoUser
     }
 #endif
 #endif
+#if PICO_ON_DEVICE
+    // Bisecting which allocation first breaks the list's circular
+    // wraparound (2026-08-16 cont'd): "21: loop start" succeeds cleanly,
+    // but "21b: after frame1" (one D_RunFrame() tic later, before any
+    // button press) is already stuck - so it happens during this tic's
+    // own Z_Malloc calls (most likely title-screen graphic caching).
+    // Printing tag/size for the first several calls, each followed by a
+    // Z_FreeMemory() health check, pinpoints exactly which call breaks
+    // it (zfm's own "stuck" print - now one-shot - will appear right
+    // after the culprit call's zm# line). See DECISIONS.md.
+    {
+        static int zm_calls;
+        if (zm_calls < 8) {
+            zm_calls++;
+            char buf[40];
+            snprintf(buf, sizeof(buf), "zm#%d: tag=%d size=%d", zm_calls, tag, size);
+            bootlog_print(buf);
+            Z_FreeMemory();
+        }
+    }
+#endif
     return result;
 }
 
@@ -676,9 +697,18 @@ int Z_FreeMemory (void)
     {
 #if PICO_ON_DEVICE
         if (++guard > 20000) {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "zfm: stuck blk=%p tag=%d", (void*)block, block->tag);
-            bootlog_print(buf);
+            // Only print once per boot (2026-08-16 cont'd): the same
+            // corrupted link gets hit on every call once the list is
+            // broken, so repeating this line just pushes other
+            // checkpoints out of bootlog's limited history for no new
+            // information. See DECISIONS.md.
+            static boolean reported;
+            if (!reported) {
+                reported = true;
+                char buf[32];
+                snprintf(buf, sizeof(buf), "zfm: stuck blk=%p tag=%d", (void*)block, block->tag);
+                bootlog_print(buf);
+            }
             break;
         }
 #endif

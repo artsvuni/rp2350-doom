@@ -494,10 +494,25 @@ void D_RunFrame()
 
     // frame syncronous IO operations
     I_StartFrame ();
+#if PICO_ON_DEVICE
+    // Bisecting D_RunFrame() itself (2026-08-16 cont'd): "21b" (right
+    // after this whole function returns, on its first call) already
+    // shows the zone list broken, and that happens before core1 has
+    // rendered anything (ruled out separately - see DECISIONS.md), so
+    // the break is somewhere in this function's own first call. One-shot
+    // checks after each major step narrow it down further.
+    { static boolean p; if (!p) { p = true; char b[40]; snprintf(b, sizeof(b), "rf1: after StartFrame free=%d", Z_FreeMemory()); bootlog_print(b); } }
+#endif
 
     TryRunTics (); // will run at least one tic
+#if PICO_ON_DEVICE
+    { static boolean p; if (!p) { p = true; char b[40]; snprintf(b, sizeof(b), "rf2: after TryRunTics free=%d", Z_FreeMemory()); bootlog_print(b); } }
+#endif
 
     S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
+#if PICO_ON_DEVICE
+    { static boolean p; if (!p) { p = true; char b[40]; snprintf(b, sizeof(b), "rf3: after UpdateSounds free=%d", Z_FreeMemory()); bootlog_print(b); } }
+#endif
 
     // Update display, next frame, with current state if no profiling is on
     if (screenvisible && !nodrawers)
@@ -631,6 +646,21 @@ void D_DoomLoop (void)
     {
         D_RunFrame();
 #if PICO_ON_DEVICE
+        // One-shot (2026-08-16 cont'd): is the zone list already broken
+        // after just the first tic of idle title-screen ticking (before
+        // any button press), or does "21: loop start" still hold by
+        // then? Narrows the corruption window down from "sometime before
+        // the first button press" to "within frame 1" or "later while
+        // idling". See DECISIONS.md.
+        {
+            static boolean printed;
+            if (!printed) {
+                printed = true;
+                char buf[32];
+                snprintf(buf, sizeof(buf), "21b: after frame1 free=%d", Z_FreeMemory());
+                bootlog_print(buf);
+            }
+        }
         // Heartbeat, not just a one-shot checkpoint: prints after every
         // return from D_RunFrame() for the first few frames, then roughly
         // once/sec forever - a static, un-animated title screen (no
@@ -642,12 +672,24 @@ void D_DoomLoop (void)
             static int frame_count;
             frame_count++;
             // Was "frame_count <= 5 || ..." (print the first 5 frames
-            // immediately) - now that bootlog keeps a 3-line scrolling
-            // history instead of a single overwritten line, that burst
-            // buries other checkpoints (like "21: loop start free=...",
-            // printed right before this loop begins) within a fraction of
-            // a second. Once/sec is enough now. See DECISIONS.md.
-            if ((frame_count % 35) == 0) {
+            // immediately) - now that bootlog keeps a scrolling history
+            // instead of a single overwritten line, that burst buries
+            // other checkpoints (like "21: loop start free=...", printed
+            // right before this loop begins) within a fraction of a
+            // second. Now also holds off the very first print for ~2s
+            // (frame_count>=70, not just "% 35 == 0" from frame 35) so
+            // that specific checkpoint stays the newest/only line long
+            // enough to actually read - RAM is too tight right now to
+            // just show more history lines instead (2026-08-16, see
+            // DECISIONS.md).
+            // Disabled (2026-08-16 cont'd): now that menu/newgame
+            // checkpoints (mr#, ng1, ng3, nl1) print on every button
+            // press, the heartbeat's periodic prints push those out of
+            // the scrolling history before they can be read. Re-enable
+            // (flip back to frame_count >= 70 && ...) if we need to
+            // confirm the loop itself is alive again, e.g. once the zone
+            // corruption is fixed and we're back to chasing a real hang.
+            if (0 && frame_count >= 70 && (frame_count % 35) == 0) {
                 char buf[32];
                 // Also show gamestate/pagetic/demosequence (declared later
                 // in this file, below D_DoomLoop - forward-declare here):

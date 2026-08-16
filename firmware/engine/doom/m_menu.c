@@ -1976,6 +1976,18 @@ boolean M_Responder (event_t* ev)
     if (key == -1)
 	return false;
 
+#if PICO_ON_DEVICE
+    {
+        static int mr_calls;
+        if (mr_calls < 3) {
+            mr_calls++;
+            char buf[40];
+            snprintf(buf, sizeof(buf), "mr%d: key=%d free=%d", mr_calls, key, Z_FreeMemory());
+            bootlog_print(buf);
+        }
+    }
+#endif
+
 #if !NO_USE_SAVE
     // Save Game string input
     if (stringEntry)
