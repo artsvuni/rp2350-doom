@@ -358,7 +358,56 @@ hardware (see bug #3 above) - so fixing this properly needs a
 single-transfer-based clear (like `AMOLED_1IN8_DisplayWindowPacked()`),
 not a call to the existing `Clear()`. Deferred; purely cosmetic.
 
+## 2026-08-16 (cont'd) — First pass at wiring touch/PWR input, not yet working
+Added `PollHardwareControls()` to `engine/pico/i_input.c`, called once per
+tic from `I_GetEvent()` (confirmed this is really on the tic path via
+`d_loop.c`'s `BuildNewTic()` -> `I_StartTic()`). Touch d-pad zones (UP/
+DOWN/LEFT/RIGHT, coordinates copied verbatim from the validated
+calibration firmware) post `ev_keydown`/`ev_keyup` for `key_up/down/left/
+right` on zone-entry/exit; PWR single/double-press (reusing
+`poll_pwr_button()`'s logic, also copied verbatim) posts a one-tic pulse
+(`keydown` now, `keyup` next poll call - see `PulseKey()`'s comment for
+why a same-tic down+up wouldn't register) for `key_fire`/`key_use`.
+Linked `touch`/`pwr_button` libraries into the `doom` target. Deliberately
+did NOT wire BOOT: it reads via floating the flash QSPI CS pin, which
+would race with core1's concurrent XIP flash reads (WAD data + code) now
+that the renderer runs on core1 - needs a real cross-core guard first,
+not a straight port of the calibration firmware's version.
+
+**Two separate open problems found, not yet resolved**:
+1. Touching a zone or pressing PWR produces no visible effect at all - a
+   diagnostic bootlog checkpoint added to fire the moment
+   `PollHardwareControls()` detects either (`"IN: touch key=..."`/
+   `"IN: PWR ..."`) never appeared during on-hardware testing, meaning the
+   input detection itself isn't firing, not just that Doom ignores what
+   it receives. Not yet root-caused - candidates: `FT3168_Init()`'s lazy
+   first-call timing (it runs on the first game-loop tic, well after
+   `I_InitGraphics()` already launched core1 - unlike the calibration
+   firmware where it ran immediately after `DEV_Module_Init()` with
+   nothing else going on), an I2C bus assumption that doesn't actually
+   hold once core1 is active, or something more basic like the zone
+   coordinates or `touch_to_logical()` needing re-validation in this
+   build's actual runtime rotation/orientation.
+2. Separately (found while investigating #1, still true regardless of
+   whether input gets fixed): the title screen's automatic countdown-and-
+   advance mechanism (vanilla's `D_PageTicker`/`D_PageDrawer`) is compiled
+   out entirely for this build - `D_Display()`'s `case GS_DEMOSCREEN:
+   D_PageDrawer();` sits inside `#if !PD_COLUMNS`, and `PD_COLUMNS=1` is
+   set (required for the DOOM_TINY renderer). Something else must be
+   responsible for both drawing the title screen we did see and for
+   advancing off of it in a `PD_COLUMNS` build - not yet traced into
+   `pd_render.cpp` to find what. Worth understanding before assuming a
+   fixed input pipeline will actually make the title screen advance.
+
+**Status**: paused again to pick up later. Diagnostic checkpoint left in
+place in `i_input.c` (harmless when idle - only prints on a detected
+press).
+
 ## Open questions
+- Touch/PWR input not being detected at all (see above) - next thing to
+  debug.
+- What actually drives title-screen advancement in a `PD_COLUMNS` build,
+  since vanilla's `D_PageTicker` path is compiled out (see above).
 - Letterbox padding noise (cosmetic, see above) - needs a single-
   transfer-based panel clear, not `AMOLED_1IN8_Clear()` as-is.
 - BOOT long-press conflict (bootloader-entry vs in-game menu) - not yet

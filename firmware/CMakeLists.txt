@@ -92,6 +92,8 @@ target_link_libraries(doom PRIVATE
     qspi_pio
     audio_pio
     es8311
+    touch
+    pwr_button
     pico_stdlib
     pico_multicore
     hardware_i2c

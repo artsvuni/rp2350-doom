@@ -31,7 +31,14 @@
 #include "i_video.h"
 #include "m_argv.h"
 #include "m_config.h"
+#include "m_controls.h"
 #include "hardware/uart.h"
+#include "pico/time.h"
+#include "pwr_button.h"
+#include "DEV_Config.h"
+#include "FT3168.h"
+#include "AMOLED_1in8.h"
+#include "bootlog.h"
 #include <stdlib.h>
 #if USB_SUPPORT
 #include "pico/binary_info.h"
@@ -511,6 +518,169 @@ static void pico_quit(void) {
 }
 #endif
 
+// --- Hardware controls: touch d-pad + PWR button --------------------------
+//
+// Design: doom/docs/DECISIONS.md, 2026-08-15 entry. Touch zones are held-
+// to-move (mirrors key_up/down/left/right's own semantics exactly, so this
+// just needs to track transitions and post the same keydown/keyup events a
+// keyboard would). PWR is momentary (I2C-read chip event, not a live GPIO
+// level) so single/double-press are synthesized here as brief keydown-then-
+// keyup pulses spanning one tic - see PulseKey() below for why it takes two
+// calls (one tic) to do that rather than posting both events at once.
+//
+// BOOT is deliberately NOT wired here yet: reading it floats the flash
+// QSPI CS pin (see lib/button/bootsel_button.c), which only worked safely
+// in the single-core calibration firmware. This target runs pd_render.cpp
+// on core1, which reads WAD data (and executes code) directly from flash
+// via XIP continuously - floating CS from core0 while core1 is mid-flash-
+// access would corrupt or hang that read, with no cross-core guard in
+// place yet. Needs a real synchronization point with core1 before it's
+// safe to add, not just a straight port of the calibration firmware's
+// version.
+//
+// Zone layout copied verbatim from the calibration firmware's main.c
+// (already tuned and validated on hardware over several rounds - see
+// DECISIONS.md) rather than re-derived.
+typedef struct {
+    const char *name;
+    int x0, y0, x1, y1; // half-open [x0,x1) x [y0,y1) in logical landscape space
+    key_type_t key;
+} touch_zone_t;
+
+static const touch_zone_t touch_zones[] = {
+    { "LEFT",  0,   270, 65,  345, KEY_LEFTARROW },
+    { "UP",    70,  90,  100, 300, KEY_UPARROW },
+    { "DOWN",  70,  300, 100, 368, KEY_DOWNARROW },
+    { "RIGHT", 105, 260, 290, 340, KEY_RIGHTARROW },
+};
+#define NUM_TOUCH_ZONES (sizeof(touch_zones) / sizeof(touch_zones[0]))
+
+static void TouchToLogical(uint16_t raw_x, uint16_t raw_y, int *logical_x, int *logical_y)
+{
+    // Inverse of Paint_SetPixel's ROTATE_90 transform (X=W-y-1, Y=x).
+    *logical_x = raw_y;
+    *logical_y = AMOLED_1IN8_WIDTH - raw_x - 1;
+}
+
+// Returns the held zone's key, or 0 if no zone (or no finger) is down.
+static key_type_t PollTouchZoneKey(void)
+{
+    uint8_t fingers = (uint8_t)FT3168_ReadState(FT3168_FINGER_NUMBER);
+    if (fingers == 0) return 0;
+
+    FT3168_Get_Point();
+    int lx, ly;
+    TouchToLogical(FT3168.x_point, FT3168.y_point, &lx, &ly);
+
+    for (size_t i = 0; i < NUM_TOUCH_ZONES; i++) {
+        const touch_zone_t *z = &touch_zones[i];
+        if (lx >= z->x0 && lx < z->x1 && ly >= z->y0 && ly < z->y1) return z->key;
+    }
+    return 0;
+}
+
+#define DOUBLE_PRESS_WINDOW_US (400 * 1000)
+
+// Returns 0=none, 1=single, 2=double, 3=long. Verbatim port of the
+// calibration firmware's poll_pwr_button() (main.c) - already validated.
+static int PollPwrButton(void)
+{
+    static absolute_time_t last_short_press;
+    static bool awaiting_double = false;
+
+    pwr_button_event_t ev = pwr_button_poll();
+
+    if (ev == PWR_BUTTON_LONG_PRESS) {
+        // The AXP2101 already handles the actual power-toggle in hardware
+        // for a long press - nothing for us to do with this event.
+        awaiting_double = false;
+        return 3;
+    }
+
+    if (ev == PWR_BUTTON_SHORT_PRESS) {
+        if (awaiting_double &&
+            absolute_time_diff_us(last_short_press, get_absolute_time()) < DOUBLE_PRESS_WINDOW_US) {
+            awaiting_double = false;
+            return 2;
+        }
+        awaiting_double = true;
+        last_short_press = get_absolute_time();
+        return 0;
+    }
+
+    if (awaiting_double &&
+        absolute_time_diff_us(last_short_press, get_absolute_time()) > DOUBLE_PRESS_WINDOW_US) {
+        awaiting_double = false;
+        return 1;
+    }
+    return 0;
+}
+
+static void PostKeyEvent(evtype_t type, key_type_t key) {
+    event_t event = { .type = type, .data1 = key, .data2 = 0, .data3 = 0 };
+    D_PostEvent(&event);
+}
+
+// A momentary chip-reported press (unlike a held GPIO level) can't be
+// expressed as a single keydown - Doom samples gamekeydown[] once per tic
+// in G_BuildTiccmd, so a keydown immediately followed by a keyup within the
+// same tic's event queue would never be observed as "pressed" at all. Hold
+// it down for exactly one full tic instead: post keydown now, remember to
+// post keyup on the *next* poll call (one tic later).
+static void PulseKey(key_type_t key, bool *pending_release)
+{
+    if (*pending_release) {
+        PostKeyEvent(ev_keyup, key);
+        *pending_release = false;
+    }
+}
+
+// Called once per tic (from I_GetEvent(), gated on I_InitGraphics() having
+// completed - see I_StartTic() in i_video.c). Lazily initializes the touch
+// controller on first call rather than in I_InputInit(): that runs at
+// I_Init() time (bootlog checkpoint 3), long before I_InitGraphics() has
+// called DEV_Module_Init() to bring up the shared I2C bus - too early.
+static void PollHardwareControls(void)
+{
+    static bool ready = false;
+    if (!ready) {
+        FT3168_Init(FT3168_Point_Mode);
+        ready = true;
+    }
+
+    static key_type_t held_zone_key = 0;
+    key_type_t zone_key = PollTouchZoneKey();
+    if (zone_key != held_zone_key) {
+        if (held_zone_key) PostKeyEvent(ev_keyup, held_zone_key);
+        if (zone_key) {
+            PostKeyEvent(ev_keydown, zone_key);
+            // TEMPORARY diagnostic: confirm the touch->event pipeline is
+            // firing at all, independent of whether the title screen (a
+            // PD_COLUMNS-specific draw path, not vanilla's D_PageDrawer -
+            // see DECISIONS.md) visually responds to it.
+            char buf[24];
+            snprintf(buf, sizeof(buf), "IN: touch key=0x%02x", zone_key);
+            bootlog_print(buf);
+        }
+        held_zone_key = zone_key;
+    }
+
+    static bool fire_pending_release = false, use_pending_release = false;
+    PulseKey(key_fire, &fire_pending_release);
+    PulseKey(key_use, &use_pending_release);
+
+    int pwr = PollPwrButton();
+    if (pwr == 1) {
+        PostKeyEvent(ev_keydown, key_fire);
+        fire_pending_release = true;
+        bootlog_print("IN: PWR single (fire)");
+    } else if (pwr == 2) {
+        PostKeyEvent(ev_keydown, key_use);
+        use_pending_release = true;
+        bootlog_print("IN: PWR double (use)");
+    }
+}
+
 void I_InputInit(void) {
 #if PICO_NO_HARDWARE
     platform_key_down = pico_key_down;
@@ -525,6 +695,9 @@ void I_InputInit(void) {
 void I_GetEvent() {
 #if USB_SUPPORT
     tuh_task();
+#endif
+#if PICO_ON_DEVICE
+    PollHardwareControls();
 #endif
     return I_GetEventTimeout(50);
 }
