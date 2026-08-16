@@ -314,9 +314,53 @@ Extensive temporary diagnostics (bootlog checkpoints scattered through
 `i_main.c`, `d_main.c`, `i_system.c`, `z_zone.c`, `i_picosound.c`) are
 still in the tree, deliberately not cleaned up yet.
 
+**Root-caused and fixed the `z6` regression, same day**: it was the RAM
+budget again, not new corruption. `panel_window` (the AMOLED presentation
+buffer) was sized for the *entire* 368px-wide physical strip
+(368x320x2 = 235KB) when Doom's rotated image only ever occupies a
+`SCREENHEIGHT`(200)-wide sub-band of that 368 (the rest is letterbox
+padding that was being allocated and DMA'd but never actually drawn
+into). Shrunk `panel_window` to exactly the used band (320x200x2 =
+128000 bytes, zero slack), moving the letterbox offset into the
+`AMOLED_1IN8_DisplayWindowPacked()` call's window instead of the buffer
+layout. This pulled the linker's `__end__` symbol back from
+`0x2007c8a4` (51KB *past* the hard `SHORTPTR_BASE+0x40000` zone
+boundary - the "short pointer" scheme's absolute limit, not a soft
+budget) to `0x200624a4` (~55KB of margin *below* it). Also added a
+proper guard in `i_system.c`'s `AutoAllocMemory()` for this exact
+direction of the bug: the existing check only caught zone memory
+starting *too low*; there was no check for it starting *too high*
+(past the window), which is what let `*size` silently underflow to a
+huge bogus value and hand Z_Init a garbage-sized zone instead of
+erroring - that's almost certainly what produced the distorted/noisy
+screen (a real DMA transfer of corrupted memory), not a clean hang.
+
+**First real rendered frame, confirmed alive**: with that fixed, boot
+proceeded all the way through the entire game loop, and the AMOLED
+displayed the actual `TITLEPIC` splash graphic decoded from the WHD/WAD
+- correct colors, correct proportions, right-side up - the first time
+any WAD-derived pixel data has rendered on this hardware. A per-frame
+heartbeat checkpoint (`d_main.c`'s game loop) confirmed ~350 frames in
+~10 seconds, i.e. running at Doom's native ~35Hz tic rate - not hung,
+just correctly idling at a static (non-animated) title screen with no
+button/touch input wired up yet to advance past it. This is the
+CLAUDE.md-stated first milestone ("get a WAD loading and rendering at
+all") - reached.
+
+**Known remaining cosmetic issue**: the letterbox padding area around
+the centered Doom image (both the pillarbox strips beside it and
+whatever's outside bootlog's own window) is never explicitly cleared,
+so it shows leftover/noise content from whatever was on the panel
+before. `AMOLED_1IN8_Clear()` (Waveshare's own full-panel clear
+function) turns out to use the same per-row `dma_channel_configure`-in-
+a-loop pattern already proven intermittently unreliable on this
+hardware (see bug #3 above) - so fixing this properly needs a
+single-transfer-based clear (like `AMOLED_1IN8_DisplayWindowPacked()`),
+not a call to the existing `Clear()`. Deferred; purely cosmetic.
+
 ## Open questions
-- The `z6` regression above - unresolved, next thing to debug if this
-  project resumes.
+- Letterbox padding noise (cosmetic, see above) - needs a single-
+  transfer-based panel clear, not `AMOLED_1IN8_Clear()` as-is.
 - BOOT long-press conflict (bootloader-entry vs in-game menu) - not yet
   resolved, see above.
 - Exact AXP2101 long-press duration threshold - observed to work, exact

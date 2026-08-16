@@ -589,18 +589,25 @@ void D_DoomLoop (void)
 
     while (1)
     {
+        D_RunFrame();
 #if PICO_ON_DEVICE
+        // Heartbeat, not just a one-shot checkpoint: prints after every
+        // return from D_RunFrame() for the first few frames, then roughly
+        // once/sec forever - a static, un-animated title screen (no
+        // button/touch input wired up yet to advance past it) looks
+        // identical to a real hang on screen, so this is the only way to
+        // tell "idle at the title screen" from "actually stuck inside
+        // D_RunFrame()" without a debugger. See DECISIONS.md 2026-08-16.
         {
             static int frame_count;
-            if (frame_count < 5) {
-                char buf[24];
-                snprintf(buf, sizeof(buf), "22.%d: before D_RunFrame", frame_count);
+            frame_count++;
+            if (frame_count <= 5 || (frame_count % 35) == 0) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "22: alive, frame #%d", frame_count);
                 bootlog_print(buf);
-                frame_count++;
             }
         }
 #endif
-        D_RunFrame();
 #if PICO_DOOM_INFO
         static uint8_t x = 0;
         if (!++x) {

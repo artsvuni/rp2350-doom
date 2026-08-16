@@ -560,30 +560,37 @@ static void new_frame_stuff(void) {
 #define DOOM_VIEW_X_OFFSET  ((AMOLED_1IN8_HEIGHT - SCREENWIDTH) / 2)   // logical X offset (448-320)/2
 #define DOOM_VIEW_Y_OFFSET  ((AMOLED_1IN8_WIDTH - SCREENHEIGHT) / 2)   // logical Y offset (368-200)/2
 
-// A full 448x368 panel buffer would be 330KB - too much on top of Doom's own
-// ~230KB of static state (frame_buffer[2], zone memory, etc) inside 520KB
-// SRAM. Since the rotated view only ever touches a physical Y-span of
-// [DOOM_VIEW_X_OFFSET, DOOM_VIEW_X_OFFSET+SCREENWIDTH) rows (the other rows
-// are blank letterbox), we only allocate that span (~230KB): row 0 of
-// panel_window is physical row DOOM_VIEW_X_OFFSET, so the per-pixel
-// placement formula below is unchanged from a full-panel buffer; only the
-// allocation size differs. Presented via AMOLED_1IN8_DisplayWindowPacked()
-// (full panel width, Y-windowed, single DMA transfer) rather than
-// AMOLED_1IN8_DisplayWindows(), which proved intermittently unreliable on
-// this hardware - see doom/docs/DECISIONS.md.
+// A full 368-wide physical strip (368x320, matching the Y-windowed DMA
+// transfer's other dimension) would be 235KB, but the rotated Doom image
+// only ever occupies a SCREENHEIGHT(200)-wide sub-band of that 368 (the
+// rest is letterbox padding either side - DOOM_VIEW_Y_OFFSET on each edge).
+// Sized to exactly that used band instead (320*200*2 = 128000 bytes, zero
+// slack) - this is what actually fixed a RAM-budget regression from
+// restoring pd_render.cpp's real (non-stub) static state: see the
+// 2026-08-16 entry in doom/docs/DECISIONS.md for the __end__/SHORTPTR_BASE
+// arithmetic that made this necessary, not just nice-to-have.
+// "base" below is relative to this narrower buffer (no + DOOM_VIEW_Y_OFFSET)
+// - that offset now lives in present_frame_to_amoled()'s DisplayWindowPacked
+// Xstart/Xend instead. Presented via AMOLED_1IN8_DisplayWindowPacked()
+// (single DMA transfer) rather than AMOLED_1IN8_DisplayWindows(), which
+// proved intermittently unreliable on this hardware - see DECISIONS.md.
 // Static, not malloc'd: Z_Init's zone claims everything from the linker's
 // __end__ symbol up to a fixed address (SHORTPTR_BASE+0x40000, required by
 // this engine's "short pointer" scheme - see i_system.c's AutoAllocMemory),
 // leaving only a thin sliver of the C library heap above that for
 // malloc(). A static array is accounted for in bss *before* __end__ is
 // computed, so it doesn't compete with the zone for that sliver at all.
-static UWORD panel_window[AMOLED_1IN8_WIDTH * SCREENWIDTH];
+//
+// NOTE: the letterbox padding area (outside this band, and outside
+// bootlog's own window) is never explicitly cleared by anything - it's
+// whatever was on the panel before. Cosmetic; fine for bring-up, revisit
+// once something is actually rendering.
+static UWORD panel_window[SCREENHEIGHT * SCREENWIDTH];
 
 static inline void blit_row_rotated90(const uint16_t *row, int doom_y) {
-    int logical_y = DOOM_VIEW_Y_OFFSET + doom_y;
-    uint32_t base = (uint32_t)(AMOLED_1IN8_WIDTH - logical_y - 1);
+    uint32_t base = (uint32_t)(SCREENHEIGHT - doom_y - 1);
     for (int x = 0; x < SCREENWIDTH; x++) {
-        panel_window[base + (uint32_t)x * AMOLED_1IN8_WIDTH] = __builtin_bswap16(row[x]);
+        panel_window[base + (uint32_t)x * SCREENHEIGHT] = __builtin_bswap16(row[x]);
     }
 }
 
@@ -624,8 +631,8 @@ static void present_frame_to_amoled(void) {
         blit_row_rotated90((const uint16_t *)row_buf, scanline);
     }
 
-    AMOLED_1IN8_DisplayWindowPacked(0, DOOM_VIEW_X_OFFSET,
-                                     AMOLED_1IN8_WIDTH, DOOM_VIEW_X_OFFSET + SCREENWIDTH,
+    AMOLED_1IN8_DisplayWindowPacked(DOOM_VIEW_Y_OFFSET, DOOM_VIEW_X_OFFSET,
+                                     DOOM_VIEW_Y_OFFSET + SCREENHEIGHT, DOOM_VIEW_X_OFFSET + SCREENWIDTH,
                                      panel_window);
 }
 

@@ -142,6 +142,17 @@ static byte *AutoAllocMemory(int *size, int default_ram, int min_ram)
         if (SHORTPTR_BASE >= (uintptr_t)zonemem) {
             I_Error("SHORTPTR_BASE bad");
         }
+        // The other direction also needs guarding: if __end__ (zonemem) has
+        // grown past SHORTPTR_BASE+0x40000 - our static/bss footprint (frame
+        // buffers, pd_render's state, etc) outgrew the fixed 256KB shortptr
+        // window - *size above underflows to a huge bogus value instead of
+        // erroring, and Z_Init proceeds to treat that garbage as real zone
+        // space, corrupting arbitrary memory. This turned exactly this bug
+        // into a distorted/frozen display instead of a clean failure once
+        // already (2026-08-16, see DECISIONS.md) - catch it here instead.
+        if ((uintptr_t)zonemem >= SHORTPTR_BASE + 0x40000) {
+            I_Error("static/bss usage exceeds shortptr zone window - see DECISIONS.md");
+        }
 #endif
 #else
 #error zone base computation only implemented for PICO_ON_DEVICE
