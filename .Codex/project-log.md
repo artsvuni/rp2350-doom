@@ -2,6 +2,13 @@
 
 ## 2026-08-16
 
+### 23:01 — Remove bootlog remnants from the game border
+
+- Confirmed the white rectangle was the one-line on-screen boot diagnostic being repainted after the panel clear.
+- Disabled normal bootlog rendering when graphics takes ownership, then clears the whole panel.
+- Kept diagnostics enabled on every fresh boot so early failure and OOM reports still work.
+- Commit: included in this display-cleanup commit.
+
 ### 22:52 — Restore pixel-exact video for an isolated freeze test
 
 - Returned the centered game image from 448x280 scaling to native 320x200.

@@ -27,6 +27,7 @@ DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with touch mo
 - OOM now watchdog-reboots into a persistent `OOM req=... free=...` report.
 - Latest freeze produced no OOM reboot, ruling out ordinary zone exhaustion.
 - Driver hardening did not eliminate the freeze; disabled audio does zero work and display DMA stalls time out and reset PIO.
+- Boot diagnostics turn off when game graphics take over, leaving a clean border while preserving next-boot OOM reporting.
 
 ## Open questions
 

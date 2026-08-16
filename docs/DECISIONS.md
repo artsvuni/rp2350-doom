@@ -921,6 +921,17 @@ blocking PIO writes and would add roughly 12ms bursts of synchronous work; it
 must be replaced with a DMA/IRQ-fed ring or double buffer before sound can be
 re-enabled without obscuring the freeze diagnosis or worsening frame pacing.
 
+## 2026-08-16 (cont'd) — Hide boot diagnostics after graphics takeover
+
+The pixel-exact build is noticeably faster on hardware. Its black border made
+two panel-memory remnants obvious: the white bootlog strip and a thin stale
+colored line. `I_InitGraphics()` cleared the panel, but later boot checkpoints
+immediately redrew the bootlog outside the smaller game window. Graphics init
+now disables normal bootlog rendering before the full-panel clear. A new boot
+re-enables diagnostics, so early boot failures and the persistent OOM report
+remain available; once Doom owns the panel, later checkpoints are no-ops and
+cannot add display DMA work or repaint the border.
+
 ## Open questions
 - **Freeze during active combat** — not ordinary zone OOM and not cured by
   removing silent audio work or bounding display DMA waits. Hardware-test the

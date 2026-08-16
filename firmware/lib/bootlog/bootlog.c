@@ -45,6 +45,7 @@ static char history[HISTORY_LINES][MSG_MAXLEN];
 static int history_count; // valid entries so far, caps at HISTORY_LINES
 static int print_count;
 static int skip_count;
+static volatile bool display_enabled;
 
 // bootlog_print() can genuinely be called from BOTH cores: most call
 // sites are core0-only (game logic, menu, input), but i_picosound.c's
@@ -92,10 +93,20 @@ void bootlog_init(void)
     Paint_Clear(WHITE);
     AMOLED_1IN8_DisplayWindowPacked(0, 0, AMOLED_1IN8_WIDTH, BOOTLOG_HEIGHT, fb);
     history_count = 0;
+    display_enabled = true;
+}
+
+void bootlog_disable(void)
+{
+    // Called by core0 before the render core is launched, so no diagnostic
+    // caller can be inside bootlog_print() concurrently at this point.
+    display_enabled = false;
 }
 
 void bootlog_print(const char *msg)
 {
+    if (!display_enabled) return;
+
     mutex_enter_blocking(&bootlog_mutex);
 
     print_count++;

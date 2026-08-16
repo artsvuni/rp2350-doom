@@ -739,6 +739,11 @@ void I_InitGraphics(void)
     // SH8601 MADCTL has no row/column exchange bit (unlike ST77xx); landscape
     // rotation is performed in small software-transposed tiles above.
     AMOLED_1IN8_SetMemoryAccessControl(0x00);
+    // The boot log is useful until graphics initialization succeeds, but its
+    // later checkpoints repaint a white strip outside the centered game view.
+    // Disable its DMA output first, then erase every non-game panel pixel.
+    // A fresh boot enables it again, preserving early-boot and OOM reports.
+    bootlog_disable();
     clear_panel_background();
 
     stbar = resolve_vpatch_handle(VPATCH_STBAR);

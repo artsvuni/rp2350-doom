@@ -24,3 +24,4 @@
 - [x] Replace the 128KB rotated framebuffer with a tiled transpose buffer.
 - [x] Clear noisy letterbox panel RAM.
 - [x] Expand the RP2350 short-pointer zone by 64KB.
+- [x] Disable on-screen boot diagnostics after graphics init and clear their panel remnants.

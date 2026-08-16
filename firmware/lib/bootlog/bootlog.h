@@ -7,6 +7,10 @@
 void bootlog_init(void);
 void bootlog_print(const char *msg);
 
+// Stop normal diagnostic rendering once game graphics owns the panel.
+// A fresh bootlog_init() call enables it again for early failures and OOM.
+void bootlog_disable(void);
+
 // Every bootlog_print() call counts (regardless of message content), but
 // nothing actually renders until the count reaches `n` - use this to skip
 // past already-confirmed-reached checkpoints so a crash shortly after a
