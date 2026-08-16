@@ -25,9 +25,11 @@ DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with touch mo
 - The original four fixed hold zones remain available via a compile-time selector.
 - The 448x280 scaler no longer divides per output pixel; performance needs hardware retesting.
 - OOM now watchdog-reboots into a persistent `OOM req=... free=...` report.
+- Latest freeze produced no OOM reboot, ruling out ordinary zone exhaustion.
+- Disabled audio now does zero work; display DMA stalls time out and reset PIO instead of deadlocking.
 
 ## Open questions
 
-- Does the next combat failure produce the persistent OOM report, or is the freeze elsewhere?
+- Does bounded display-DMA recovery plus true no-audio mode eliminate the combat freeze?
 - Does the floating swipe-and-hold model feel better than fixed zones, and what dead-zone tuning does it need?
 - How should BOOT/menu and weapon switching be safely integrated?

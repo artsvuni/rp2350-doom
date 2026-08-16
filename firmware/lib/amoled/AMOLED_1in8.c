@@ -29,6 +29,7 @@
 #include "DEV_Config.h"
 #include "AMOLED_1in8.h"
 #include "pico/mutex.h"
+#include "pico/time.h"
 
 AMOLED_1IN8_ATTRIBUTES AMOLED_1IN8;
 
@@ -49,6 +50,23 @@ AMOLED_1IN8_ATTRIBUTES AMOLED_1IN8;
 static mutex_t dma_tx_mutex;
 static volatile bool dma_tx_mutex_ready = false;
 static bool address_axes_exchanged = false;
+
+static bool wait_for_dma_or_recover(uint64_t timeout_us)
+{
+    uint64_t started_us = time_us_64();
+    while (dma_channel_is_busy(dma_tx)) {
+        if (time_us_64() - started_us > timeout_us) {
+            dma_channel_abort(dma_tx);
+            pio_sm_set_enabled(qspi.pio, qspi.sm, false);
+            pio_sm_clear_fifos(qspi.pio, qspi.sm);
+            pio_sm_restart(qspi.pio, qspi.sm);
+            pio_sm_set_enabled(qspi.pio, qspi.sm, true);
+            return false;
+        }
+        tight_loop_contents();
+    }
+    return true;
+}
 
 /********************************************************************************
 function:	Sets the start position and size of the display area
@@ -249,7 +267,12 @@ void AMOLED_1IN8_Display(UWORD *Image)
                         true);                    // Start transferring immediately
     
     // Waiting for DMA transfer to complete
-    while(dma_channel_is_busy(dma_tx));
+    // A lost PIO DREQ used to block core1 forever here, which in turn blocks
+    // Doom's core0/core1 render rendezvous and looks like a total gameplay
+    // freeze. A 35KB tile normally completes in well under 20ms; on timeout,
+    // abort the transfer and restart the PIO state machine so the next tile
+    // or frame can recover instead of deadlocking permanently.
+    wait_for_dma_or_recover(20000);
     QSPI_Deselect(qspi);
 }
 
@@ -281,7 +304,9 @@ void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t 
                         (Xend - Xstart) * (Yend - Ystart) * 2,
                         true);
 
-    while(dma_channel_is_busy(dma_tx));
+    // This is the runtime presentation path. Never let one lost PIO DREQ
+    // permanently strand core1 and therefore Doom's render rendezvous.
+    wait_for_dma_or_recover(20000);
     QSPI_Deselect(qspi);
 
     mutex_exit(&dma_tx_mutex);

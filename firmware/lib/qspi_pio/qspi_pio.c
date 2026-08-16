@@ -86,6 +86,13 @@ parameter:
     qspi : QSPI structure
 ******************************************************************************/	
 void QSPI_PIO_Init(pio_qspi_t qspi){
+    // The temporary bootlog and the game graphics path initialize the same
+    // PIO instance. Loading the program twice wastes instruction memory and
+    // reinitializes a live state machine at a different offset.
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+
     uint offset = pio_add_program(qspi.pio, &qspi_4wire_data_program);
     qspi_4wire_data_program_init(qspi.pio, qspi.sm_4wire, offset, PIN_SCLK, PIN_DIO0, 4);
 

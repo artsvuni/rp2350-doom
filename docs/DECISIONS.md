@@ -877,6 +877,62 @@ message. If the next combat freeze neither reboots nor shows this report, OOM
 is ruled out and investigation should move to thinker/list corruption or a
 non-memory deadlock.
 
+## 2026-08-16 (cont'd) — Freeze is not OOM; end-to-end driver hardening
+
+Hardware test froze during combat again but did **not** watchdog-reboot or show
+the persistent OOM report. This rules out the normal `Z_Malloc` exhaustion
+path. Reviewed the render/presentation/audio driver path end to end and found
+three concrete defects that explain both lag and a silent permanent freeze:
+
+1. `DEBUG_NO_SOUND=1` only made `S_StartSound`/music no-ops.
+   `I_Pico_UpdateSound()` still mixed and synchronously pushed 512 silent
+   samples through `audio_out()` whenever either render core waited. Upstream's
+   audio pool is non-blocking; ours is not. Made `I_Pico_UpdateSound()` return
+   immediately under `DEBUG_NO_SOUND`, so disabled audio now truly does zero
+   work and cannot pace/stall the render rendezvous.
+2. `AMOLED_1IN8_DisplayWindowPacked()` waited forever on
+   `dma_channel_is_busy()`. A single lost PIO DREQ/state-machine stall strands
+   core1 permanently; core0 then blocks on its rendering semaphore, producing
+   exactly a frozen gameplay frame with no OOM/reboot. Added a 20ms timeout
+   (normal 35KB tiles are far faster), DMA abort, FIFO clear, PIO restart, and
+   continuation so a hardware transfer fault drops/corrupts at most a frame.
+3. `bootlog_init()` and `I_InitGraphics()` both called `DEV_Module_Init()` and
+   `QSPI_PIO_Init()`. This claimed/leaked a DMA channel and loaded/reinitialized
+   the same PIO program twice. Made both initializers idempotent.
+
+Build succeeds. The remaining unavoidable cost of the current quality setting
+is 448x280x2 = 250,880 QSPI bytes per presented frame (versus 128,000 at native
+320x200); hardware retest will show how much lag was silent-audio CPU blocking
+versus display bandwidth.
+
+## 2026-08-16 (cont'd) — Freeze is not OOM; end-to-end driver hardening
+
+Hardware test froze during combat again but did **not** watchdog-reboot or show
+the persistent OOM report. This rules out the normal `Z_Malloc` exhaustion
+path. Reviewed the render/presentation/audio driver path end to end and found
+three concrete defects that explain both lag and a silent permanent freeze:
+
+1. `DEBUG_NO_SOUND=1` only made `S_StartSound`/music no-ops.
+   `I_Pico_UpdateSound()` still mixed and synchronously pushed 512 silent
+   samples through `audio_out()` whenever either render core waited. Upstream's
+   audio pool is non-blocking; ours is not. Made `I_Pico_UpdateSound()` return
+   immediately under `DEBUG_NO_SOUND`, so disabled audio now truly does zero
+   work and cannot pace/stall the render rendezvous.
+2. `AMOLED_1IN8_DisplayWindowPacked()` waited forever on
+   `dma_channel_is_busy()`. A single lost PIO DREQ/state-machine stall strands
+   core1 permanently; core0 then blocks on its rendering semaphore, producing
+   exactly a frozen gameplay frame with no OOM/reboot. Added a 20ms timeout
+   (normal 35KB tiles are far faster), DMA abort, FIFO clear, PIO restart, and
+   continuation so a hardware transfer fault drops/corrupts at most a frame.
+3. `bootlog_init()` and `I_InitGraphics()` both called `DEV_Module_Init()` and
+   `QSPI_PIO_Init()`. This claimed/leaked a DMA channel and loaded/reinitialized
+   the same PIO program twice. Made both initializers idempotent.
+
+Build succeeds. The remaining unavoidable cost of the current quality setting
+is 448x280x2 = 250,880 QSPI bytes per presented frame (versus 128,000 at native
+320x200); hardware retest will show how much lag was silent-audio CPU blocking
+versus display bandwidth.
+
 ## Open questions
 - **Freeze during actual gameplay after a rapid touch-event burst** (see
   immediately above) - not yet investigated. Suspect the touch-input

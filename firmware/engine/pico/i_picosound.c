@@ -372,6 +372,14 @@ static boolean I_Pico_SoundIsPlaying(int channel)
 // the sample rate the same way upstream's IRQ-driven buffer pool did.
 static void I_Pico_UpdateSound(void)
 {
+#if PICO_ON_DEVICE && DEBUG_NO_SOUND
+    // DEBUG_NO_SOUND previously stopped S_StartSound() but still mixed and
+    // synchronously pushed a 512-sample silent buffer from render wait loops.
+    // The replacement audio driver is blocking (unlike upstream's async
+    // buffer pool), so even silence imposed substantial latency and could
+    // interfere with the multicore rendezvous. No sound must mean no work.
+    return;
+#endif
     if (!sound_initialized) return;
 
     // Called from both cores (see update_sound_mutex's comment above) -

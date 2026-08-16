@@ -148,6 +148,13 @@ Info:
 ******************************************************************************/
 UBYTE DEV_Module_Init(void)
 {
+    // bootlog_init() and I_InitGraphics() share this hardware layer and both
+    // call DEV_Module_Init(). Claiming a fresh DMA channel on every call leaks
+    // the first channel and silently retargets the global driver state.
+    static bool initialized = false;
+    if (initialized) return 0;
+    initialized = true;
+
     stdio_init_all();
     sleep_ms(1000);
     DEV_GPIO_Init();

@@ -2,6 +2,14 @@
 
 ## 2026-08-16
 
+### 22:41 — Harden display/audio drivers against stalls
+
+- Confirmed the latest combat freeze was not normal zone OOM.
+- Disabled all mixing/output work when `DEBUG_NO_SOUND` is active.
+- Added bounded AMOLED DMA wait with abort/FIFO-clear/PIO restart recovery.
+- Made shared module and QSPI PIO initialization idempotent.
+- Commit: included in this driver-hardening commit.
+
 ### 22:31 — Optimize scaled output and persist OOM evidence
 
 - Replaced per-output-pixel 5/7 integer division with an equivalent incremental scaler.

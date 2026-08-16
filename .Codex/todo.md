@@ -15,6 +15,7 @@
 - [x] Add a persistent exact-allocation OOM diagnostic.
 - [ ] If the next freeze is not OOM, instrument thinker/block lists and multicore rendezvous.
 - [ ] Reassess scaled-display lag after removing per-pixel division.
+- [ ] Hardware-test driver stall recovery and true no-audio performance.
 - [ ] Make audio output non-blocking and re-enable sound.
 
 ## Completed
