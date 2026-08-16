@@ -2,13 +2,13 @@
 
 ## Summary
 
-DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with touch movement plus the PWR button. The current diagnostic build uses centered, pixel-exact 320x200 output. The renderer uses a tiled software transpose because the SH8601 cannot rotate axes in hardware. Recent work recovered substantial SRAM and expanded Doom's zone to 227,944 bytes. Extended gameplay is improved but a silent freeze during active combat remains.
+DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with touch movement plus the PWR button. The current diagnostic build uses centered, pixel-exact 320x200 output. The renderer uses a tiled software transpose because the SH8601 cannot rotate axes in hardware. The current sound-enabled build leaves 235,864 bytes in Doom's zone. Extended gameplay is improved but a silent freeze during active combat remains under investigation.
 
 ## Active goals
 
 - Make one-finger touch movement comfortable and efficient.
 - Confirm extended-play memory stability and diagnose any remaining freeze.
-- Eventually replace the blocking audio path and re-enable sound.
+- Hardware-test the new asynchronous sound-effect path without regressing gameplay stability.
 
 ## Key decisions made
 
@@ -28,10 +28,13 @@ DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with touch mo
 - Latest freeze produced no OOM reboot, ruling out ordinary zone exhaustion.
 - Driver hardening did not eliminate the freeze; disabled audio does zero work and display DMA stalls time out and reset PIO.
 - Boot diagnostics turn off when game graphics take over, leaving a clean border while preserving next-boot OOM reporting.
+- Sound effects are enabled through a two-buffer DMA/IRQ I2S queue; all ADPCM channel mutations are serialized across cores.
+- Music remains disabled independently with `DEBUG_NO_MUSIC=1` until a real backend and compatible lump path are implemented.
 
 ## Open questions
 
 - Does the lower-cost pixel-exact video path eliminate or delay the combat freeze?
 - If not, where do persistent stage/heartbeat diagnostics show the two cores stopping?
+- Does asynchronous SFX remain glitch-free and stable during repeated menu input and sustained combat?
 - Does the floating swipe-and-hold model feel better than fixed zones, and what dead-zone tuning does it need?
 - How should BOOT/menu and weapon switching be safely integrated?

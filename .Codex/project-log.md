@@ -2,6 +2,14 @@
 
 ## 2026-08-16
 
+### 23:12 — Re-enable sound effects through buffered DMA
+
+- Replaced blocking per-sample PIO writes with a non-blocking two-buffer DMA/IRQ queue that emits silence on underflow.
+- Serialized every ADPCM channel mutation across cores and removed obsolete sound bootlog traffic.
+- Added saturating mixing, corrected pitch scaling, and enabled SFX while keeping unsupported music independently disabled.
+- Verified a release build with 235,864 bytes of short-pointer zone remaining.
+- Commit: included in this asynchronous-audio commit.
+
 ### 23:01 — Remove bootlog remnants from the game border
 
 - Confirmed the white rectangle was the one-line on-screen boot diagnostic being repainted after the panel clear.

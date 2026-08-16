@@ -698,9 +698,9 @@ void S_StartMusic(int m_id)
 
 void S_ChangeMusic(int musicnum, int looping)
 {
-#if PICO_ON_DEVICE && DEBUG_NO_SOUND
-    // Same DEBUG_NO_SOUND switch as S_StartSound() (see there for why),
-    // extended to music: S_Start() (called at the top of every level
+#if PICO_ON_DEVICE && DEBUG_NO_MUSIC
+    // Music remains separately disabled while sound effects are enabled:
+    // S_Start() (called at the top of every level
     // load) calls this to start level music, which does a *named* lump
     // lookup (W_GetNumForName("d_..")) - but our WAD's music is
     // MUSX_COMPRESSED (custom format, see CMakeLists.txt), so that
@@ -806,4 +806,3 @@ void test_next_sound() {
     S_StartUnpositionedSound(snd_idx);
 }
 #endif
-

@@ -76,7 +76,13 @@ void dout_pio_init(void);
 void din_pio_init(void);
 void mclk_pio_init(void);
 void set_mclk_frequency(uint32_t frequency);
-int32_t *data_treating(const int16_t *audio, uint32_t len);
-void audio_out(int32_t *samples, int32_t len);
+
+// Non-blocking I2S output. The driver owns two 512-frame DMA buffers and
+// continuously feeds either a queued buffer or silence to the PIO state
+// machine. Callers should only mix when audio_queue_available() is true.
+bool audio_dma_init(void);
+void audio_dma_shutdown(void);
+bool audio_queue_available(void);
+bool audio_try_queue(const int16_t *samples, uint32_t sample_count);
 
 #endif //_PICO_AUDIO_PIO_H

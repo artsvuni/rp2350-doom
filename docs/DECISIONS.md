@@ -932,13 +932,41 @@ re-enables diagnostics, so early boot failures and the persistent OOM report
 remain available; once Doom owns the panel, later checkpoints are no-ops and
 cannot add display DMA work or repaint the border.
 
+## 2026-08-16 (cont'd) — Re-enable SFX with asynchronous DMA audio
+
+Replaced the blocking ES8311/PIO output path before re-enabling sound effects.
+The Waveshare/mp3player driver was valid for a dedicated player loop, but its
+`pio_sm_put_blocking()` loop stalled whichever Doom render core called it for
+the full 512-sample block (about 11.6ms at 44.1kHz). The new backend claims a
+separate DMA channel, uses DMA IRQ 1 (display DMA does not use it), and owns two
+static 512-frame output buffers. The IRQ continuously schedules the oldest
+queued block or a static silence block on underflow. Mixing checks for a free
+buffer and returns immediately when both are occupied; game/render code never
+waits for I2S timing. If codec clocks or the PIO DREQ stop, audio can fall
+silent but no game core blocks on the stuck DMA.
+
+Also extended `update_sound_mutex` across **all** channel starts, stops, volume
+updates, playing-state reads, and mixing. Previously it serialized two mixers
+but still allowed core0 to replace/decompress a channel while core1 was mixing
+the same ADPCM state. Removed the obsolete per-sound bootlog tracing, saturated
+mix additions before narrowing to `int16_t`, and corrected pitch scaling (the
+old non-normal-pitch formula divided by `pitch` again and cancelled the pitch
+change).
+
+`DEBUG_NO_SOUND` is no longer defined, so SFX are active. Music remains
+explicitly isolated behind `DEBUG_NO_MUSIC=1`: `i_oplmusic.c` is still a stub,
+and the normal named-lump lookup is not suitable for this MUSX-compressed WAD.
+The linked build succeeds with `__end__=0x200466a8`, leaving 235,864 bytes in
+the short-pointer zone through `0x20080000`. Hardware testing is still required
+for codec output, menu progression, combat audio, performance, and stability.
+
 ## Open questions
 - **Freeze during active combat** — not ordinary zone OOM and not cured by
   removing silent audio work or bounding display DMA waits. Hardware-test the
   pixel-exact build next; if it still freezes, add persistent stage/heartbeat
   diagnostics around multicore rendezvous, rendering, and game-tic processing.
-- Making the audio path DMA/IRQ-driven and non-blocking — the real sound fix,
-  not yet attempted. `DEBUG_NO_SOUND=1` is the diagnostic stopgap.
+- Hardware-test the new DMA/IRQ SFX path through repeated menu sounds and
+  sustained combat; music remains a later, separate backend project.
 - Touch/PWR input not being detected at all (see above) - next thing to
   debug.
 - What actually drives title-screen advancement in a `PD_COLUMNS` build,
