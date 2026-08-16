@@ -665,7 +665,29 @@ all). Past corruption-hunting now, so bootlog's history was shrunk from
 zone - comfortably more than the measured shortfall). Confirmed on
 hardware: **the game runs** - level loads fully and is playable.
 
+**Third freeze, found during actual play**: after playing briefly
+(turning, walking, shooting - real gameplay, HUD visible with 100%
+health, weapon/ammo shown, an enemy on screen), the game froze again.
+Confirmed via bootlog this is a *different* bug from the two above: no
+`OOM: Z_Malloc` line (so not zone exhaustion again - that checkpoint is
+a generic hook in `Z_Malloc` itself and would have fired regardless of
+call site). The last visible lines before the freeze were a rapid burst
+of touch events alternating between two key codes: `IN: touch key=0xad`,
+`IN: touch key=0xae`, `IN: touch key=0xad`. Not yet investigated further
+(out of time this session) - but the pattern (same two codes repeating
+fast, right before the freeze) points at the touch-input handling path
+itself (`engine/pico/i_input.c` and/or the touch driver in
+`lib/touch/`) rather than game logic - e.g. an event-queue overrun, or a
+repeat/debounce issue generating events faster than the game loop drains
+them. Next session: find where `0xad`/`0xae` touch events are generated
+and queued, and check for an unbounded-growth or overwrite-without-check
+pattern under rapid repeated input.
+
 ## Open questions
+- **Freeze during actual gameplay after a rapid touch-event burst** (see
+  immediately above) - not yet investigated. Suspect the touch-input
+  event path, not game logic or zone memory (ruled out via the `OOM:
+  Z_Malloc` checkpoint not firing).
 - Making the audio path non-blocking (see above) - the real fix,
   not yet attempted. `DEBUG_NO_SOUND=1` is a working stopgap.
 - Touch/PWR input not being detected at all (see above) - next thing to
