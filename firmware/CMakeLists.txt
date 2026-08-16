@@ -235,7 +235,19 @@ target_compile_definitions(doom PRIVATE
     USE_MEMORY_WAD=1
     PICO_DEBUG_MALLOC=1
 
-    PICO_CORE1_STACK_SIZE=0x4f8
+    # Was 0x4f8 (1272 bytes, upstream's RP2040 value) - way too tight now
+    # that core1 actually renders real content (menu fonts/vpatches, not
+    # just the simple title splash) through pd_render.cpp's deeper call
+    # paths (flush_visplanes alone has ~1.8KB of locals). Suspected cause
+    # of a hard-to-pin-down freeze + memory-corruption symptoms (bootlog
+    # text appearing in screen regions its own code never targets) first
+    # seen 2026-08-16 navigating the menu - see doom/docs/DECISIONS.md.
+    # NOT free to size arbitrarily from the ~55KB general RAM margin: this
+    # lives in SCRATCH_X, a separate, fixed 4KB hardware SRAM bank on
+    # RP2350 (see default_locations.ld) dedicated to core1's stack - 0x1000
+    # is the most this can ever be. An 0x2000 attempt overflowed into
+    # SCRATCH_Y, which core0's own default stack needs.
+    PICO_CORE1_STACK_SIZE=0x1000
     NO_IERROR=1
 
     NO_ZONE_DEBUG=1
@@ -245,6 +257,11 @@ target_compile_definitions(doom PRIVATE
     # firmware size instead of upstream's tight 0x10048000.
     TINY_WAD_ADDR=0x10200000
 
+    # TEMPORARY (see doom/docs/DECISIONS.md 2026-08-16): skips S_StartSound()
+    # entirely to test whether the deterministic "second interaction always
+    # freezes" bug is really in the audio path. Remove this line to
+    # re-enable sound once resolved either way.
+    DEBUG_NO_SOUND=1
 )
 # Deliberately NOT set (unlike upstream's RP2040-cramped build):
 # PICO_TIME_DEFAULT_ALARM_POOL_DISABLED / _MAX_TIMERS, PICO_DISABLE_SHARED_IRQ_HANDLERS,

@@ -626,12 +626,14 @@ static void PostKeyEvent(evtype_t type, key_type_t key) {
 // in G_BuildTiccmd, so a keydown immediately followed by a keyup within the
 // same tic's event queue would never be observed as "pressed" at all. Hold
 // it down for exactly one full tic instead: post keydown now, remember to
-// post keyup on the *next* poll call (one tic later).
-static void PulseKey(key_type_t key, bool *pending_release)
+// post keyup on the *next* poll call (one tic later). Tracks which key was
+// actually sent (not just whether one is pending), since PWR sends a
+// different key depending on menuactive - see PollHardwareControls().
+static void PulseKey(key_type_t *pending_key)
 {
-    if (*pending_release) {
-        PostKeyEvent(ev_keyup, key);
-        *pending_release = false;
+    if (*pending_key) {
+        PostKeyEvent(ev_keyup, *pending_key);
+        *pending_key = 0;
     }
 }
 
@@ -665,19 +667,31 @@ static void PollHardwareControls(void)
         held_zone_key = zone_key;
     }
 
-    static bool fire_pending_release = false, use_pending_release = false;
-    PulseKey(key_fire, &fire_pending_release);
-    PulseKey(key_use, &use_pending_release);
+    static key_type_t button1_pending_key = 0, button2_pending_key = 0;
+    PulseKey(&button1_pending_key);
+    PulseKey(&button2_pending_key);
+
+    // menuactive (m_menu.c) has no header declaration - it's a plain
+    // global, not part of the public menu API.
+    extern boolean menuactive;
 
     int pwr = PollPwrButton();
     if (pwr == 1) {
-        PostKeyEvent(ev_keydown, key_fire);
-        fire_pending_release = true;
-        bootlog_print("IN: PWR single (fire)");
+        // Single-press: "confirm/select" in the menu (key_menu_forward,
+        // vanilla default KEY_ENTER - menu navigation doesn't listen for
+        // key_fire at all, so without this branch you could navigate with
+        // touch but never actually select "New Game". See DECISIONS.md
+        // 2026-08-16 (cont'd)), otherwise fire.
+        key_type_t k = menuactive ? key_menu_forward : key_fire;
+        PostKeyEvent(ev_keydown, k);
+        button1_pending_key = k;
+        bootlog_print(menuactive ? "IN: PWR single (menu select)" : "IN: PWR single (fire)");
     } else if (pwr == 2) {
-        PostKeyEvent(ev_keydown, key_use);
-        use_pending_release = true;
-        bootlog_print("IN: PWR double (use)");
+        // Double-press: "back" in the menu, otherwise use.
+        key_type_t k = menuactive ? key_menu_back : key_use;
+        PostKeyEvent(ev_keydown, k);
+        button2_pending_key = k;
+        bootlog_print(menuactive ? "IN: PWR double (menu back)" : "IN: PWR double (use)");
     }
 }
 

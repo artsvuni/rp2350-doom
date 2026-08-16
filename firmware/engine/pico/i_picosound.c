@@ -43,6 +43,7 @@
 #include "DEV_Config.h"
 #include "audio_pio.h"
 #include "es8311.h"
+#include "pico/mutex.h"
 #if PICO_ON_DEVICE
 #include "bootlog.h"
 #endif
@@ -114,6 +115,19 @@ static void (*music_generator)(audio_buffer_t *buffer);
 static struct audio_buffer mix_buffer;
 
 static boolean sound_initialized = false;
+
+// pd_render.cpp's SafeUpdateSound() calls I_UpdateSound() (-> here) from
+// BOTH core0 (during rendering) and core1 (pd_core1_loop's idle wait) -
+// upstream's original pico_audio_i2s buffer-pool API was safe for that;
+// mp3player's audio_pio driver (what we swapped in, see DECISIONS.md)
+// wasn't written for concurrent multi-core callers. Confirmed on hardware
+// 2026-08-16: the very first real sound effect (menu-navigate blip) froze
+// solid, with checkpoints showing the whole mixing pipeline (including
+// audio_out()) completing once before the freeze - consistent with a
+// second, concurrent call from the other core corrupting shared channel/
+// mix-buffer state or deadlocking the PIO/DMA push. Initialized in
+// I_Pico_InitSound(), single-core, before core1 exists.
+static mutex_t update_sound_mutex;
 static channel_t channels[NUM_SOUND_CHANNELS];
 
 static boolean use_sfx_prefix;
@@ -281,6 +295,43 @@ static void I_Pico_UpdateSoundParams(int handle, int vol, int sep)
 
 static int I_Pico_StartSound(should_be_const sfxinfo_t *sfxinfo, int channel, int vol, int sep, int pitch)
 {
+    // TEMPORARY diagnostic: this whole path (real ADPCM decompression +
+    // mixing, as opposed to just codec init) has never actually been
+    // exercised on hardware before now - see DECISIONS.md 2026-08-16
+    // (cont'd). The freeze right after the menu-navigate blip sound
+    // (sfx_pstop) reproduces 100% deterministically, every time - NOT the
+    // signature of a timing race (that would be intermittent) - so it's
+    // very likely a genuine logic bug hit on some specific call number
+    // (e.g. a second/third StartSound or UpdateSound call, once a channel
+    // is actually mid-playback), not necessarily the very first one.
+    // These printed reliably for the first several real triggers with no
+    // sign of the freeze location (2026-08-16, see DECISIONS.md) - capped
+    // back down from "unconditional" to reduce diagnostic overhead while
+    // testing the actual fixes (DMA mutex, audio mutex, bigger core1
+    // stack) in isolation.
+#if PICO_ON_DEVICE
+    static int call_num = 0;
+    call_num++;
+    bool show = call_num <= 3;
+    if (show) {
+        char buf[32];
+        // New 2026-08-16 finding: it's specifically the *second* user
+        // interaction of ANY kind (touch or PWR, menu-move or menu-select)
+        // that freezes, every time - not "DOWN" or "the sound" specifically.
+        // Print the channel *index* s_sound.c's S_GetChannel() assigned
+        // this call, and that channel's PRE-EXISTING i_picosound.c state
+        // (from a possibly-still-warm previous playback), to check whether
+        // a stale/incompletely-reset channel is the actual difference
+        // between call #1 (always fine) and call #2 (always freezes).
+        snprintf(buf, sizeof(buf), "as1:#%d ch=%d ds=%d",
+                 call_num, channel, channels[channel].decompressed_size);
+        bootlog_print(buf);
+        snprintf(buf, sizeof(buf), "as1b: off=%lu dend-d=%ld",
+                 (unsigned long)channels[channel].offset,
+                 (long)(channels[channel].data_end - channels[channel].data));
+        bootlog_print(buf);
+    }
+#endif
     if (!check_and_init_channel(channel)) return -1;
 
     stop_channel(channel);
@@ -289,6 +340,15 @@ static int I_Pico_StartSound(should_be_const sfxinfo_t *sfxinfo, int channel, in
         assert(!is_channel_playing(channel));
     }
     I_Pico_UpdateSoundParams(channel, vol, sep);
+#if PICO_ON_DEVICE
+    if (show) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "as2:#%d ds=%d step=%lu",
+                 call_num, channels[channel].decompressed_size,
+                 (unsigned long)channels[channel].step);
+        bootlog_print(buf);
+    }
+#endif
     return channel;
 }
 
@@ -314,6 +374,14 @@ static void I_Pico_UpdateSound(void)
 {
     if (!sound_initialized) return;
 
+    // Called from both cores (see update_sound_mutex's comment above) -
+    // skip this call entirely if the other core is already mid-update,
+    // rather than block (blocking here could stall a render-timing-
+    // critical caller on core0, or core1's own tic-servicing loop).
+    // Dropping an occasional audio update is a far better failure mode
+    // than the two cores racing on channels[]/mix_buffer/the PIO push.
+    if (!mutex_try_enter(&update_sound_mutex, NULL)) return;
+
     int16_t *samples = mix_buffer.samples;
     if (music_generator) {
         music_generator(&mix_buffer);
@@ -321,8 +389,26 @@ static void I_Pico_UpdateSound(void)
         memset(samples, 0, sizeof(mix_buffer.samples));
     }
 
+#if PICO_ON_DEVICE
+    static int mix_call_num = 0;
+    bool first_mix = false;
+#endif
     for(int ch=0; ch < NUM_SOUND_CHANNELS; ch++) {
         if (is_channel_playing(ch)) {
+#if PICO_ON_DEVICE
+            mix_call_num++;
+            // Opening the menu (the "first interaction") also plays a
+            // sound (sfx_swtchn) and may itself take several mixing calls
+            // to finish - a cap of 3 could expire before the *second*
+            // interaction's sound (the one that actually seems to freeze)
+            // ever gets mixed at all. Generous cap instead.
+            first_mix = mix_call_num <= 20;
+            if (first_mix) {
+                char buf[24];
+                snprintf(buf, sizeof(buf), "as3: mix #%d ch=%d", mix_call_num, ch);
+                bootlog_print(buf);
+            }
+#endif
             channel_t *channel = &channels[ch];
             assert(channel->decompressed_size);
             int vol_mono = (channel->left/2 + channel->right/2) / 2;
@@ -375,9 +461,26 @@ static void I_Pico_UpdateSound(void)
         }
     }
 
+#if PICO_ON_DEVICE
+    char mbuf[24];
+    // Now includes mix_call_num (unlike before) - can't tell mixing call
+    // #1 (always fine so far) from #2 (suspected, given the "always the
+    // *second* interaction" finding) without it. See DECISIONS.md.
+    if (first_mix) { snprintf(mbuf, sizeof(mbuf), "as4:#%d loop done", mix_call_num); bootlog_print(mbuf); }
+#endif
     int32_t *frames = data_treating(samples, MIX_BUFFER_SAMPLES);
+#if PICO_ON_DEVICE
+    if (first_mix) { snprintf(mbuf, sizeof(mbuf), "as5:#%d bef out", mix_call_num); bootlog_print(mbuf); }
+#endif
     audio_out(frames, MIX_BUFFER_SAMPLES);
+#if PICO_ON_DEVICE
+    if (first_mix) { snprintf(mbuf, sizeof(mbuf), "as6:#%d aft out", mix_call_num); bootlog_print(mbuf); }
+#endif
     free(frames);
+    mutex_exit(&update_sound_mutex);
+#if PICO_ON_DEVICE
+    if (first_mix) { snprintf(mbuf, sizeof(mbuf), "as7:#%d released", mix_call_num); bootlog_print(mbuf); }
+#endif
 }
 
 static void I_Pico_ShutdownSound(void)
@@ -421,6 +524,7 @@ static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
     bootlog_print("s6: dout_pio_init OK");
 #endif
 
+    mutex_init(&update_sound_mutex);
     sound_initialized = true;
     return true;
 }

@@ -37,6 +37,9 @@
 #include "p_local.h"
 #include "w_wad.h"
 #include "z_zone.h"
+#if PICO_ON_DEVICE
+#include "bootlog.h"
+#endif
 
 #if INCLUDE_SOUND_C_IN_S_SOUND
 #undef INCLUDE_SOUND_C_IN_S_SOUND
@@ -455,6 +458,14 @@ void S_StartUnpositionedSound(int sfx_id) {
 
 void S_StartSound(xy_positioned_t *origin, int sfx_id)
 {
+#if PICO_ON_DEVICE && DEBUG_NO_SOUND
+    // TEMPORARY diagnostic switch (see doom/docs/DECISIONS.md 2026-08-16):
+    // skip the entire sound-effect pipeline to test whether the
+    // deterministic "second interaction always freezes" bug is actually
+    // in the audio path (all evidence points there, but not confirmed) or
+    // a red herring. Toggle via CMakeLists.txt's DEBUG_NO_SOUND define.
+    return;
+#endif
     should_be_const sfxinfo_t *sfx;
     int rc;
     int sep;
@@ -589,6 +600,14 @@ void S_UpdateSounds(mobj_t *listener)
     should_be_const sfxinfo_t*        sfx;
     channel_t*        c;
 
+    // Per-frame su1/su2 checkpoints removed (2026-08-16, see DECISIONS.md):
+    // they printed reliably every tic for hundreds of calls, so were ruled
+    // out as the freeze location - but stacking that much *additional*
+    // per-tic diagnostic overhead (blocking DMA text draws + mutex
+    // contention, from several call sites at once) on top of an already
+    // RAM/timing-tight build risked being a confound in its own right.
+    // Stripped back to test the actual fixes (DMA mutex, audio mutex,
+    // bigger core1 stack) with minimal added interference.
     I_UpdateSound();
 
     for (cnum=0; cnum<snd_channels; cnum++)

@@ -28,8 +28,26 @@
 ******************************************************************************/
 #include "DEV_Config.h"
 #include "AMOLED_1in8.h"
+#include "pico/mutex.h"
 
 AMOLED_1IN8_ATTRIBUTES AMOLED_1IN8;
+
+// dma_tx (DEV_Config.c) is one single global DMA channel, used with zero
+// locking by both this driver's own calls AND lib/bootlog's independent
+// diagnostic calls - on the Doom project (not this calibration firmware),
+// those come from different cores (bootlog from core0, the game's own
+// present_frame_to_amoled() from core1), racing on dma_tx unsynchronized.
+// Confirmed on hardware (2026-08-16, see doom/docs/DECISIONS.md): both the
+// game view AND the bootlog text froze simultaneously right after a
+// diagnostic change made bootlog print on every frame instead of rarely,
+// which otherwise would have made this collision unlikely to ever hit.
+// Guards just AMOLED_1IN8_DisplayWindowPacked() (the only function either
+// caller actually uses - see DECISIONS.md on why the others proved
+// intermittently unreliable). Lazy-init is safe: the first-ever call to
+// this function always happens during single-core boot, before core1
+// (or, in this calibration firmware, before any second caller) exists.
+static mutex_t dma_tx_mutex;
+static volatile bool dma_tx_mutex_ready = false;
 
 /********************************************************************************
 function:	Sets the start position and size of the display area
@@ -230,6 +248,12 @@ void AMOLED_1IN8_Display(UWORD *Image)
 // instead of just using AMOLED_1IN8_DisplayWindows().
 void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend, UWORD *Image)
 {
+    if (!dma_tx_mutex_ready) {
+        mutex_init(&dma_tx_mutex);
+        dma_tx_mutex_ready = true;
+    }
+    mutex_enter_blocking(&dma_tx_mutex);
+
     if(Yend > AMOLED_1IN8.HEIGHT) Yend = AMOLED_1IN8.HEIGHT;
     if(Xend > AMOLED_1IN8.WIDTH) Xend = AMOLED_1IN8.WIDTH;
 
@@ -247,6 +271,8 @@ void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t 
 
     while(dma_channel_is_busy(dma_tx));
     QSPI_Deselect(qspi);
+
+    mutex_exit(&dma_tx_mutex);
 }
 
 /******************************************************************************

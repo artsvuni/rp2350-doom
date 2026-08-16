@@ -514,8 +514,42 @@ void D_RunFrame()
             I_FinishUpdate ();              // page flip or blit buffer
         }
 #else
+        // Confirmed (2026-08-16, see DECISIONS.md) the audio mixing path
+        // is NOT the freeze cause after all - it completes cleanly every
+        // time. This loop is the next suspect: if pd_render.cpp's own
+        // wipestate state machine (separate from vanilla's NO_USE_WIPE'd
+        // f_wipe.c melt - see wipestate's transitions in pd_render.cpp)
+        // ever gets left non-WIPESTATE_NONE without a way back to NONE,
+        // this spins forever with no crash and no further heartbeat -
+        // exactly the observed symptom. Diagnose *and* guard: print
+        // wipestate if stuck for way longer than any real wipe needs, and
+        // break out rather than hang forever.
+#if PICO_ON_DEVICE
+        // Per-call DISP:/su1:/su2:/as#: checkpoints removed (2026-08-16,
+        // see DECISIONS.md): all of them printed reliably for hundreds of
+        // calls with no sign of the freeze location, while stacking heavy
+        // per-tic diagnostic overhead (blocking DMA text draws + mutex
+        // contention) on an already RAM/timing-tight build risked being a
+        // confound of its own. Testing the actual fixes (DMA mutex, audio
+        // mutex, bigger core1 stack) with minimal added interference.
+        // Kept: this guard, since it's cheap and only fires if genuinely
+        // stuck (200+ iterations, far more than any real wipe needs).
+        static int wipe_loop_guard = 0;
+#endif
         do {
             D_Display();
+#if PICO_ON_DEVICE
+            if (wipestate) {
+                if (++wipe_loop_guard > 200) {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "WIPE: stuck ws=%d", wipestate);
+                    bootlog_print(buf);
+                    break;
+                }
+            } else {
+                wipe_loop_guard = 0;
+            }
+#endif
         } while (wipestate);
 #endif
     }
@@ -603,7 +637,14 @@ void D_DoomLoop (void)
             frame_count++;
             if (frame_count <= 5 || (frame_count % 35) == 0) {
                 char buf[32];
-                snprintf(buf, sizeof(buf), "22: alive, frame #%d", frame_count);
+                // Also show gamestate/pagetic/demosequence (declared later
+                // in this file, below D_DoomLoop - forward-declare here):
+                // is the title screen's own ~5s timeout (D_PageTicker ->
+                // D_AdvanceDemo, unconditional, no button/touch involved)
+                // actually running at all? See DECISIONS.md 2026-08-16 (cont'd).
+                extern int pagetic, demosequence;
+                snprintf(buf, sizeof(buf), "22: f#%d gs=%d pt=%d ds=%d",
+                         frame_count, gamestate, pagetic, demosequence);
                 bootlog_print(buf);
             }
         }
@@ -687,9 +728,33 @@ void D_DoAdvanceDemo (void)
     // dont want to preserver above^
     if (gameversion == exe_ultimate)
 #endif
+      // TODO: exe_ultimate's 7-step cycle isn't reachable with our
+      // shareware doom1.wad (single episode), so the static-only cycling
+      // below isn't applied here - see the else branch's comment for why
+      // it would need it too, if this ever matters.
       demosequence = (demosequence+1)%7;
-    else
-      demosequence = (demosequence+1)%6;
+    else {
+      // In the 6-step cycle (non-ultimate), even indices (0=TITLEPIC,
+      // 2=CREDIT, 4=TITLEPIC/HELP2) are static screens and odd indices
+      // (1,3,5) are G_DeferedPlayDemo("demo1"/"demo2"/"demo3") calls. Demo
+      // playback for our WHD build goes through a custom bit-packed
+      // decoder (G_DoPlayDemo's th_read_simple_decoder/th_bit_input_init
+      // calls) that hangs on real hardware, right after G_InitNew() has
+      // already set up a real level (explains a HUD briefly appearing,
+      // then freezing, with no response to input - see DECISIONS.md
+      // 2026-08-16 (cont'd)). Demo playback is cosmetic only, not needed
+      // for the "get it playable" goal, so cycle through ONLY the static
+      // slots {0,2,4} via our own counter, not the (demosequence+2)%6
+      // trick attempted first: demosequence starts at -1 (D_StartTitle),
+      // so +2 from -1 lands on 1 (a demo slot) on the very first
+      // transition, then stays on odd slots forever after - the exact bug
+      // this is meant to avoid. An independent counter sidesteps that
+      // regardless of demosequence's prior value.
+      static int safe_idx = 0;
+      static const int safe_demosequence[] = {0, 2, 4};
+      demosequence = safe_demosequence[safe_idx];
+      safe_idx = (safe_idx + 1) % (int)(sizeof(safe_demosequence) / sizeof(safe_demosequence[0]));
+    }
     
     switch (demosequence)
     {

@@ -403,7 +403,73 @@ not a straight port of the calibration firmware's version.
 place in `i_input.c` (harmless when idle - only prints on a detected
 press).
 
+## 2026-08-16 (cont'd) — Menu freeze root-caused to the audio subsystem
+Long debugging arc (many hardware round-trips) chasing a 100%-
+deterministic freeze: menu navigable exactly once (either opening it, or
+one move within it - each of which triggers a sound effect,
+`sfx_swtchn`/`sfx_pstop`), then frozen solid on the *second* interaction
+of any kind, always. Ruled out, in order, with real evidence each time
+(not just "tried it and moved on"):
+- The WHD demo-decoder hang (a real, separate bug - see the entry above -
+  fixed by skipping demo playback slots in `D_DoAdvanceDemo`).
+- `AMOLED_1IN8_Clear()`'s per-row DMA loop pattern (never actually called
+  in this path - ruled out by inspection, not testing).
+- A cross-core race on the shared `dma_tx` DMA channel between bootlog's
+  diagnostic prints (core0) and the game's own frame presentation
+  (core1) - real and fixed (added `dma_tx_mutex` in `AMOLED_1in8.c`), but
+  didn't fix this freeze.
+- A cross-core race in the audio mixing path (`I_Pico_UpdateSound()`,
+  called from both cores via `pd_render.cpp`'s `SafeUpdateSound()`) -
+  real and fixed (added `update_sound_mutex` in `i_picosound.c`), but
+  didn't fix this freeze either.
+- `pd_render.cpp`'s own `wipestate` transition state machine getting
+  stuck non-`WIPESTATE_NONE` - added a diagnostic+safety-break guard,
+  never fired.
+- Core1's stack (`PICO_CORE1_STACK_SIZE`, was 0x4f8 = 1272 bytes,
+  upstream's RP2040 value) being too tight for real rendering - bumped
+  to 0x1000 (the most SCRATCH_X, the fixed 4KB hardware SRAM bank it
+  lives in, can hold), no change.
+- `bootlog_print()` itself having no protection around its own shared
+  state (`fb[]`/`next_line`/`print_count`), only around the DMA transfer
+  - real gap, fixed (added `bootlog_mutex`), no change.
+- Our own diagnostic instrumentation being heavy enough to cause the
+  problem itself (very plausible given how much was added) - tested by
+  stripping per-tic checkpoints back to near-nothing; freeze persisted
+  identically, ruling this out too.
+
+Every one of the above was a real, legitimate bug or gap worth fixing
+regardless (multiple genuine unguarded cross-core races existed and are
+now fixed), but none of them were *this* freeze's cause. The actual
+confirmation: building with `S_StartSound()` stubbed out entirely
+(`DEBUG_NO_SOUND=1` in CMakeLists.txt, `s_sound.c`) - the exact same menu
+navigation that reliably froze on the second interaction works
+perfectly with sound off. This conclusively narrows the bug to
+`i_picosound.c`'s `I_Pico_StartSound()`/`I_Pico_UpdateSound()` (or
+something in `audio_pio.c`/`es8311.c` beneath them) specifically
+triggered by a **second** sound-effect start - not corruption, not a
+race (all of those are now independently fixed and ruled out), not
+diagnostic overhead. A leading unconfirmed hypothesis: something in
+channel reuse/reset between `S_StopChannel()` (game-level) and this
+engine's own `channels[]` array (hardware-level, `stop_channel()` /
+`is_channel_playing()`) leaves stale state that only bites on a second
+trigger - not yet verified with the channel-state checkpoints
+(`as1`/`as1b`/`as2`, printing channel index + decompressed_size/offset/
+step) added right before this was found, since `DEBUG_NO_SOUND=1` was
+tried next instead and immediately confirmed the audio path as the
+cause.
+
+**Status**: `DEBUG_NO_SOUND=1` currently enabled - unblocks menu/game
+navigation entirely, at the cost of no sound effects. Good enough to
+keep making progress on gameplay while the actual audio bug gets a
+dedicated look later. To resume: remove `DEBUG_NO_SOUND=1` from
+CMakeLists.txt, reproduce the freeze (open menu, then one more
+interaction), and read the `as1`/`as1b`/`as2` channel-state checkpoints
+already in place in `i_picosound.c`'s `I_Pico_StartSound()` - they were
+added but never actually read before the sound-off test intervened.
+
 ## Open questions
+- The actual audio bug (see above) - narrowed to `i_picosound.c`, not
+  yet found. `DEBUG_NO_SOUND=1` is a working stopgap, not a fix.
 - Touch/PWR input not being detected at all (see above) - next thing to
   debug.
 - What actually drives title-screen advancement in a `PD_COLUMNS` build,

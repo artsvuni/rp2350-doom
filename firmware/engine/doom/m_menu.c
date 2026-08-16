@@ -51,6 +51,9 @@
 #include "m_controls.h"
 #include "p_saveg.h"
 #include "p_setup.h"
+#if PICO_ON_DEVICE
+#include "bootlog.h"
+#endif
 
 #include "s_sound.h"
 
@@ -2211,12 +2214,31 @@ boolean M_Responder (event_t* ev)
     {
         // Move down to next item
 
+        // If every item in this menu is disabled (status==-1), this loop
+        // never finds one and spins forever - a latent bug in vanilla
+        // itself, but only ever hit here for the first time on real
+        // hardware (2026-08-16, see DECISIONS.md: froze immediately after
+        // a touch-DOWN opened the menu). A real menu should never actually
+        // have zero enabled items; bail after a generous iteration bound
+        // instead of hanging, so a genuine occurrence is diagnosable
+        // rather than a silent freeze.
+#if PICO_ON_DEVICE
+        int guard = 0;
+#endif
         do
 	{
 	    if (itemOn+1 > currentMenu->numitems-1)
 		itemOn = 0;
 	    else itemOn++;
 	    S_StartUnpositionedSound( sfx_pstop);
+#if PICO_ON_DEVICE
+            if (++guard > currentMenu->numitems + 2) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "MENU: down stuck, n=%d", currentMenu->numitems);
+                bootlog_print(buf);
+                break;
+            }
+#endif
 	} while(currentMenu->menuitems[itemOn].status==-1);
 
 	return true;
@@ -2225,12 +2247,23 @@ boolean M_Responder (event_t* ev)
     {
         // Move back up to previous item
 
-	do
+#if PICO_ON_DEVICE
+        int guard = 0;
+#endif
+        do
 	{
 	    if (!itemOn)
 		itemOn = currentMenu->numitems-1;
 	    else itemOn--;
 	    S_StartUnpositionedSound( sfx_pstop);
+#if PICO_ON_DEVICE
+            if (++guard > currentMenu->numitems + 2) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "MENU: up stuck, n=%d", currentMenu->numitems);
+                bootlog_print(buf);
+                break;
+            }
+#endif
 	} while(currentMenu->menuitems[itemOn].status==-1);
 
 	return true;
