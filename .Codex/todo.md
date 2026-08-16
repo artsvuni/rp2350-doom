@@ -13,15 +13,14 @@
 
 - [ ] Confirm extended-play stability with the 227,944-byte zone.
 - [x] Add a persistent exact-allocation OOM diagnostic.
-- [ ] If the next freeze is not OOM, instrument thinker/block lists and multicore rendezvous.
-- [ ] Reassess scaled-display lag after removing per-pixel division.
-- [ ] Hardware-test driver stall recovery and true no-audio performance.
-- [ ] Make audio output non-blocking and re-enable sound.
+- [ ] Hardware-test centered pixel-exact 320x200 video during active combat.
+- [ ] If 320x200 still freezes, add persistent core/render/game-tic heartbeat stages.
+- [ ] Make audio output DMA/IRQ-driven and non-blocking, then re-enable sound.
 
 ## Completed
 
 - [x] Filter touch boundary chatter and remove blocking per-transition logs.
-- [x] Scale video to aspect-correct 448x280 output.
+- [x] Implement both aspect-correct 448x280 scaling and native 320x200 presentation.
 - [x] Replace the 128KB rotated framebuffer with a tiled transpose buffer.
 - [x] Clear noisy letterbox panel RAM.
 - [x] Expand the RP2350 short-pointer zone by 64KB.

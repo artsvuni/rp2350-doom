@@ -2,6 +2,13 @@
 
 ## 2026-08-16
 
+### 22:52 — Restore pixel-exact video for an isolated freeze test
+
+- Returned the centered game image from 448x280 scaling to native 320x200.
+- Cut display traffic by 49%, reduced frame transfers from seven to five, and recovered 10,240 bytes of tile SRAM.
+- Kept audio completely disabled; the blocking backend will be redesigned only after the combat freeze is isolated.
+- Commit: included in this pixel-exact diagnostic commit.
+
 ### 22:41 — Harden display/audio drivers against stalls
 
 - Confirmed the latest combat freeze was not normal zone OOM.
