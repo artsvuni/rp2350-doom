@@ -638,15 +638,19 @@ re-enabled, starting a game now freezes partway through `P_LoadThings()`
 exploding barrel) out of 138. This did *not* happen when rendering was
 disabled (the same exact loop completed cleanly then), so it's suspected
 to be a core0/core1 timing or rendezvous issue exposed by real rendering
-load, not a repeat of the zone corruption above. A bracket checkpoint
-around that specific `P_SpawnMapThing(48)` call was added but not yet
-tested on hardware. Next session should start here.
+load, not a repeat of the zone corruption above. A bracket checkpoint around that specific `P_SpawnMapThing(48)` call
+was added and tested on hardware: `sm1: before P_SpawnMapThing(48)`
+prints, `sm2: after` never does - confirming the hang is **inside**
+`P_SpawnMapThing()`/`P_SpawnMobj()` itself while spawning the barrel
+(doomednum 2035), not somewhere after it returns. Next session should
+bisect inside `P_SpawnMobj`/`P_SpawnMapThing` next (`p_mobj.c` /
+`p_setup.c`'s `P_SpawnMapThing`).
 
 ## Open questions
 - **Thing-spawn freeze with real rendering enabled** (see immediately
-  above) - the current blocker, not yet root-caused. Freezes inside or
-  immediately after spawning thing #48 (first exploding barrel, doomednum
-  2035) during `P_LoadThings()`. Suspect core0/core1 timing, since the
+  above) - the current blocker, not yet root-caused. Confirmed stuck
+  *inside* `P_SpawnMapThing(48)`/`P_SpawnMobj()` itself while spawning
+  the first exploding barrel (doomednum 2035). Suspect core0/core1 timing, since the
   identical code path is clean with rendering disabled.
 - Making the audio path non-blocking (see above) - the real fix,
   not yet attempted. `DEBUG_NO_SOUND=1` is a working stopgap.
