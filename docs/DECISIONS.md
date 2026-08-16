@@ -192,11 +192,138 @@ Shareware `doom1.wad` (free, id Software-authorized distribution since
 can disappear or change). Alexander's own retail WAD should replace this
 once we're past bring-up.
 
+## 2026-08-16 — Engine vendored, `i_video.c`/`i_picosound.c` written, hardware bring-up (in progress, paused)
+Vendored ~220 files of `kilograham/rp2040-doom`'s `DOOM_TINY` engine into
+`firmware/engine/`, built a `whd_gen` host tool from source (no CMake -
+direct clang invocations) to preprocess `doom1.wad` (shareware, legal to
+redistribute) into a flash-mapped `WHD` blob (`IWHX`/super-tiny format,
+`TINY_WAD_ADDR=0x10200000`), and wrote real replacements for `i_video.c`
+(presents `frame_buffer`/`palette`-composited scanlines to the AMOLED via
+QSPI/DMA) and `i_picosound.c` (routes audio through `mp3player`'s
+`audio_pio`/ES8311 driver instead of `pico_audio_i2s`). No serial console
+available/working in this setup, so a small custom **on-screen boot log**
+library (`lib/bootlog/`) was built for hardware debugging: prints short
+checkpoint strings directly to the AMOLED as boot proceeds, no scroll (it
+just wraps/clears), with `bootlog_skip_until(n)` to jump straight to
+checkpoint `n` when RAM is too tight to keep a long visible history.
+
+**Five separate, genuinely unrelated bugs** blocked boot entirely (black
+screen, no USB enumeration), found one at a time via checkpoint
+bisection across many hardware round-trips:
+1. Upstream's 270MHz overclock + a QMI (flash timing) tweak tuned for
+   RP2040/their flash chip - silent hang on our RP2350 board. Commented
+   out; stock clock is fine for now, revisit for performance later.
+2. `PICO_SMPS_MODE_PIN` (GPIO23, from the generic `pico2` board header we
+   use for toolchain/SDK purposes only) collides with our board's actual
+   I2S LRCLK pin. Commented out.
+3. `AMOLED_1IN8_DisplayWindows()` (Waveshare's own per-row-DMA windowed
+   update function) is **intermittently unreliable on this hardware** -
+   works repeatedly, then silently stops updating the panel with no code
+   change, across dozens of test cycles. `AMOLED_1IN8_Display()`
+   (full-panel, single DMA transfer) never once failed. Wrote
+   `AMOLED_1IN8_DisplayWindowPacked()` replicating `Display()`'s
+   single-transfer pattern for a sub-window; both `bootlog.c` and
+   `i_video.c` use it instead. This one cost the most time - it looked
+   like random flakiness across totally unrelated variables (bootlog
+   size, frame buffer size, float/double config) before being correctly
+   isolated to this one function.
+4. `dma_tx` (the DMA channel the AMOLED driver uses) is only ever
+   assigned inside `DEV_Module_Init()` - missing that call left it
+   pointing at an unclaimed/unconfigured channel, and
+   `dma_channel_is_busy()` on it spins forever. Added the call to both
+   `bootlog_init()` and `I_InitGraphics()`.
+5. WAD magic mismatch: `whd_gen` as built always emits `"IWHX"` (super
+   tiny format), but the firmware checked for `"IWHD"` since
+   `WHD_SUPER_TINY` wasn't defined. Added `WHD_SUPER_TINY=1`,
+   `DEMO1_ONLY=1` (shareware is single-episode anyway),
+   `NO_USE_FINALE_CAST=1`, `NO_USE_FINALE_BUNNY=1` to match.
+
+**Two deeper architectural issues**, found after the above via the same
+checkpoint bisection technique, once boot got further:
+- `pico_set_float_implementation(doom none)` /
+  `pico_set_double_implementation(doom none)` (which upstream sets, since
+  Doom's own code is float-free) silently hung inside `mclk_pio_init()` -
+  `mp3player`'s `set_mclk_frequency()` does real `double` math, and
+  `none` replaces float/double ops with non-functional stubs rather than
+  erroring. Removed both defines.
+- The engine's "short pointer" memory compression scheme
+  (`shortptr_t`/`ptr_to_shortptr()` in `doomtype.h`) requires zone memory
+  to live inside a fixed address window
+  (`[SHORTPTR_BASE+4, SHORTPTR_BASE+0x40000)`), enforced by an
+  unconditional `bkpt #0` (not a graceful assert) on violation. This
+  window computation was accidentally gated behind `USE_ZONE_FOR_MALLOC`
+  (disabled for an unrelated reason - it collides with pico_malloc's own
+  `__wrap_malloc`), so zone memory came from a plain `malloc()` call
+  instead, landing outside the valid window and hitting the breakpoint.
+  Made the `__end__`/`SHORTPTR_BASE`-based computation in
+  `AutoAllocMemory()` (`i_system.c`) unconditional. This freed up the
+  zone to claim everything from `__end__` up to `SHORTPTR_BASE+0x40000`,
+  which in turn left too little of the C library heap for `panel_window`
+  (235KB) to `malloc()` - fixed by making it a `static` array instead
+  (accounted for in `.bss` *before* `__end__` is computed, so it doesn't
+  compete with the zone for the same sliver of RAM).
+
+**Milestone reached**: with all of the above fixed, boot reliably
+proceeded through the *entire* early sequence - display init, audio init
+(ES8311/PIO), WAD loading/parsing, zone memory, `R_Init`, `P_Init`,
+`S_Init`, `D_CheckNetGame` - all the way to `I_InitGraphics()` completing
+successfully. Furthest point reached in the project so far.
+
+**Then, restoring the real `pd_render.cpp`** (the actual DOOM_TINY
+renderer - had been swapped for a no-op stub during isolation testing)
+**failed at link time**: `.bss` overflowed the 520KB RAM region by
+~11.4KB, since `pd_render.cpp`'s real static state (`list_buffer`
+~88.5KB, `visplane_bit`, patch/flat decoder scratch buffers, etc. -
+~103KB total, vs. the stub's near-zero footprint) is real weight on top
+of `frame_buffer` (~105KB), `panel_window` (~230KB), and bootlog's own
+buffer. Fixed by shrinking bootlog's buffer further (64px tall → 32px,
+i.e. down to showing 1 checkpoint line at a time) - it's explicitly a
+temporary diagnostic tool, the cheapest thing to shrink. Link succeeded
+with ~32KB of `.bss` headroom to spare.
+
+**First hardware test of the real renderer regressed**: rather than
+progressing past checkpoint 17 as before, boot now shows a
+distorted/noisy ("помехи") frozen panel, and after restoring full
+checkpoint visibility (removing `bootlog_skip_until`, since RAM allows
+only 1 visible line right now anyway) the last checkpoint reported was
+**`z6: I_ZoneBase returned to Z_Init`** - i.e. it's now hanging *earlier*
+than the previously-fixed SHORTPTR_BASE bug's location, despite that fix
+still being in place and nothing in this area being touched today. Not
+yet root-caused. Leading hypotheses, untested:
+- Stack overflow: several of `pd_render.cpp`'s real functions have large
+  local buffers (e.g. `flush_visplanes` ~1.8KB, `get_patch_decoder`
+  ~0.9KB, nested several calls deep) now linked in for the first time,
+  possibly corrupting nearby RAM (including the zone/bootlog buffers)
+  even though `z6` executes long before any of that code actually runs -
+  worth checking whether something in *static initialization* (C++
+  global constructors for `pd_render.cpp`'s file-scope state, which run
+  before `main()`) is the actual culprit, not runtime call depth.
+  A "noisy" panel (vs. a clean hang) suggests a real DMA transfer of
+  garbage data happened, which points at memory corruption rather than a
+  pure infinite loop.
+- The RAM budget is now genuinely tight (~32KB headroom in `.bss` alone,
+  before accounting for stack/heap in the remaining sliver above the
+  zone) - worth deliberately re-measuring actual stack usage rather than
+  guessing.
+- Should NOT re-suspect `AMOLED_1IN8_DisplayWindows()` (bug #3 above) -
+  both bootlog and i_video already use the proven
+  `AMOLED_1IN8_DisplayWindowPacked()` path.
+
+**Status**: paused here to document and decide whether to continue.
+Extensive temporary diagnostics (bootlog checkpoints scattered through
+`i_main.c`, `d_main.c`, `i_system.c`, `z_zone.c`, `i_picosound.c`) are
+still in the tree, deliberately not cleaned up yet.
+
 ## Open questions
+- The `z6` regression above - unresolved, next thing to debug if this
+  project resumes.
 - BOOT long-press conflict (bootloader-entry vs in-game menu) - not yet
   resolved, see above.
 - Exact AXP2101 long-press duration threshold - observed to work, exact
   timing not measured or found in a quick datasheet pass. Not blocking;
   revisit only if it turns out to feel wrong in actual play.
-- Writing the actual `i_video.c` (AMOLED) and `i_picosound.c`
-  (ES8311/PIO) replacements - not started yet, next milestone.
+- Button/touch control wiring into the actual game - not started; boot/
+  render bring-up has been the entire focus so far.
+- WHD_SUPER_TINY/DEMO1_ONLY choice (see fix #5 above) was made for
+  shareware's sake; swapping in Alexander's own multi-episode retail WAD
+  later will need `whd_gen` and these defines revisited together.

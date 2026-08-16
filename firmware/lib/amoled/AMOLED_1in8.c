@@ -222,7 +222,31 @@ void AMOLED_1IN8_Display(UWORD *Image)
     
     // Waiting for DMA transfer to complete
     while(dma_channel_is_busy(dma_tx));
-    QSPI_Deselect(qspi);             
+    QSPI_Deselect(qspi);
+}
+
+// Single-DMA-transfer window blit for a *tightly packed* Image buffer
+// (no full-panel stride) - see the header comment on why this exists
+// instead of just using AMOLED_1IN8_DisplayWindows().
+void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend, UWORD *Image)
+{
+    if(Yend > AMOLED_1IN8.HEIGHT) Yend = AMOLED_1IN8.HEIGHT;
+    if(Xend > AMOLED_1IN8.WIDTH) Xend = AMOLED_1IN8.WIDTH;
+
+    AMOLED_1IN8_SetWindows(Xstart, Ystart, Xend, Yend);
+    QSPI_Select(qspi);
+    QSPI_Pixel_Write(qspi, 0x2c);
+
+    channel_config_set_dreq(&c, pio_get_dreq(qspi.pio, qspi.sm, true));
+    dma_channel_configure(dma_tx,
+                        &c,
+                        &qspi.pio->txf[qspi.sm],
+                        (UBYTE *)Image,
+                        (Xend - Xstart) * (Yend - Ystart) * 2,
+                        true);
+
+    while(dma_channel_is_busy(dma_tx));
+    QSPI_Deselect(qspi);
 }
 
 /******************************************************************************

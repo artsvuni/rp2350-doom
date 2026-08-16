@@ -49,6 +49,14 @@ void AMOLED_1IN8_SetBrightness(uint8_t brightness);
 void AMOLED_1IN8_SetWindows(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend);
 void AMOLED_1IN8_Display(UWORD *Image);
 void AMOLED_1IN8_DisplayWindows(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend, UWORD *Image);
+// Like AMOLED_1IN8_DisplayWindows(), but Image is a *tightly packed* buffer
+// sized exactly (Xend-Xstart)x(Yend-Ystart) (no full-panel-width stride),
+// sent as a single DMA transfer instead of DisplayWindows()'s per-row loop.
+// DisplayWindows() has proven intermittently unreliable on this hardware
+// (works for a while, then silently stops updating the panel) - this is a
+// smaller, more reliable alternative for a sub-window blit when you don't
+// have (or want) a full-panel-sized buffer. See doom/docs/DECISIONS.md.
+void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend, UWORD *Image);
 void AMOLED_1IN8_Clear(UWORD Color);
 
 #endif // !_AMOLED_1IN8_H_
