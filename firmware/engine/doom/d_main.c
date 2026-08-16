@@ -641,7 +641,13 @@ void D_DoomLoop (void)
         {
             static int frame_count;
             frame_count++;
-            if (frame_count <= 5 || (frame_count % 35) == 0) {
+            // Was "frame_count <= 5 || ..." (print the first 5 frames
+            // immediately) - now that bootlog keeps a 3-line scrolling
+            // history instead of a single overwritten line, that burst
+            // buries other checkpoints (like "21: loop start free=...",
+            // printed right before this loop begins) within a fraction of
+            // a second. Once/sec is enough now. See DECISIONS.md.
+            if ((frame_count % 35) == 0) {
                 char buf[32];
                 // Also show gamestate/pagetic/demosequence (declared later
                 // in this file, below D_DoomLoop - forward-declare here):
