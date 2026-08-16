@@ -538,9 +538,13 @@ static void pico_quit(void) {
 // safe to add, not just a straight port of the calibration firmware's
 // version.
 //
-// Zone layout copied verbatim from the calibration firmware's main.c
-// (already tuned and validated on hardware over several rounds - see
-// DECISIONS.md) rather than re-derived.
+// Control model selector. The original model uses four fixed invisible hold
+// zones (preserved below for instant fallback). The experimental model is a
+// floating four-way digital joystick: touch anywhere, drag past a dead zone,
+// then hold or slide around the original anchor.
+#define TOUCH_CONTROL_SWIPE_HOLD 1
+
+// Original fixed-zone layout, copied verbatim from the calibration firmware.
 typedef struct {
     const char *name;
     int x0, y0, x1, y1; // half-open [x0,x1) x [y0,y1) in logical landscape space
@@ -577,6 +581,74 @@ static key_type_t PollTouchZoneKey(void)
         if (lx >= z->x0 && lx < z->x1 && ly >= z->y0 && ly < z->y1) return z->key;
     }
     return 0;
+}
+
+// Floating digital joystick / swipe-and-hold model. A gesture begins wherever
+// the finger lands. Dominant-axis bias avoids rapid left/up or right/down
+// changes near 45-degree diagonals; the caller adds a two-tic transition
+// stability filter as a second line of defense against controller jitter.
+#define SWIPE_DEAD_ZONE_PX 24
+#define SWIPE_AXIS_BIAS_PX 8
+static key_type_t PollTouchSwipeHoldKey(void)
+{
+    static bool gesture_active = false;
+    static int anchor_x, anchor_y;
+    static key_type_t chosen_key = 0;
+
+    uint8_t fingers = (uint8_t)FT3168_ReadState(FT3168_FINGER_NUMBER);
+    if (fingers == 0) {
+        gesture_active = false;
+        chosen_key = 0;
+        return 0;
+    }
+
+    FT3168_Get_Point();
+    int lx, ly;
+    TouchToLogical(FT3168.x_point, FT3168.y_point, &lx, &ly);
+
+    if (!gesture_active) {
+        gesture_active = true;
+        anchor_x = lx;
+        anchor_y = ly;
+        chosen_key = 0;
+        return 0;
+    }
+
+    int dx = lx - anchor_x;
+    int dy = ly - anchor_y;
+    int ax = abs(dx);
+    int ay = abs(dy);
+    if (ax < SWIPE_DEAD_ZONE_PX && ay < SWIPE_DEAD_ZONE_PX) {
+        chosen_key = 0;
+        return 0;
+    }
+
+    bool horizontal;
+    if (ax > ay + SWIPE_AXIS_BIAS_PX) {
+        horizontal = true;
+    } else if (ay > ax + SWIPE_AXIS_BIAS_PX) {
+        horizontal = false;
+    } else if (chosen_key == KEY_LEFTARROW || chosen_key == KEY_RIGHTARROW) {
+        horizontal = true;
+    } else if (chosen_key == KEY_UPARROW || chosen_key == KEY_DOWNARROW) {
+        horizontal = false;
+    } else {
+        horizontal = ax > ay;
+    }
+
+    chosen_key = horizontal
+        ? (dx < 0 ? KEY_LEFTARROW : KEY_RIGHTARROW)
+        : (dy < 0 ? KEY_UPARROW : KEY_DOWNARROW);
+    return chosen_key;
+}
+
+static key_type_t PollTouchMovementKey(void)
+{
+#if TOUCH_CONTROL_SWIPE_HOLD
+    return PollTouchSwipeHoldKey();
+#else
+    return PollTouchZoneKey();
+#endif
 }
 
 #define DOUBLE_PRESS_WINDOW_US (400 * 1000)
@@ -650,35 +722,35 @@ static void PollHardwareControls(void)
         ready = true;
     }
 
-    // The FT3168 can jitter between two adjacent zones while a finger is
-    // resting on their boundary.  Posting every sample change produces an
+    // The FT3168 can jitter between adjacent directions. Posting every sample
+    // change produces an
     // alternating keyup/keydown burst (and used to redraw the bootlog for
     // every transition).  Require a new non-zero zone to be observed on two
     // consecutive tics before committing it.  A release is still immediate
     // so Doom can never be left believing a movement key is held.
-    static key_type_t held_zone_key = 0;
-    static key_type_t candidate_zone_key = 0;
-    static uint8_t candidate_zone_tics = 0;
-    key_type_t zone_key = PollTouchZoneKey();
+    static key_type_t held_touch_key = 0;
+    static key_type_t candidate_touch_key = 0;
+    static uint8_t candidate_touch_tics = 0;
+    key_type_t touch_key = PollTouchMovementKey();
 
-    if (zone_key == held_zone_key) {
-        candidate_zone_key = 0;
-        candidate_zone_tics = 0;
-    } else if (zone_key == 0) {
-        if (held_zone_key) PostKeyEvent(ev_keyup, held_zone_key);
-        held_zone_key = 0;
-        candidate_zone_key = 0;
-        candidate_zone_tics = 0;
+    if (touch_key == held_touch_key) {
+        candidate_touch_key = 0;
+        candidate_touch_tics = 0;
+    } else if (touch_key == 0) {
+        if (held_touch_key) PostKeyEvent(ev_keyup, held_touch_key);
+        held_touch_key = 0;
+        candidate_touch_key = 0;
+        candidate_touch_tics = 0;
     } else {
-        if (zone_key != candidate_zone_key) {
-            candidate_zone_key = zone_key;
-            candidate_zone_tics = 1;
-        } else if (++candidate_zone_tics >= 2) {
-            if (held_zone_key) PostKeyEvent(ev_keyup, held_zone_key);
-            PostKeyEvent(ev_keydown, zone_key);
-            held_zone_key = zone_key;
-            candidate_zone_key = 0;
-            candidate_zone_tics = 0;
+        if (touch_key != candidate_touch_key) {
+            candidate_touch_key = touch_key;
+            candidate_touch_tics = 1;
+        } else if (++candidate_touch_tics >= 2) {
+            if (held_touch_key) PostKeyEvent(ev_keyup, held_touch_key);
+            PostKeyEvent(ev_keydown, touch_key);
+            held_touch_key = touch_key;
+            candidate_touch_key = 0;
+            candidate_touch_tics = 0;
         }
     }
 

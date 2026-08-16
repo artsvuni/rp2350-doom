@@ -2,9 +2,10 @@
 
 ## Controls
 
-- [ ] Research established one-finger directional controls for small touchscreens.
-- [ ] Document the current fixed hold-zone model.
-- [ ] Implement and hardware-test swipe-direction-and-hold movement anywhere on screen.
+- [x] Research established one-finger directional controls for small touchscreens.
+- [x] Document the current fixed hold-zone model.
+- [x] Implement swipe-direction-and-hold movement anywhere on screen.
+- [ ] Hardware-test and tune swipe dead zone/axis bias.
 - [ ] If swipe-and-hold is unsatisfactory, redesign the fixed touch-zone sizes and placement.
 - [ ] Resolve BOOT long-press/menu mapping without unsafe cross-core flash access.
 

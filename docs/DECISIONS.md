@@ -753,6 +753,82 @@ short-pointer target would hit the deliberate `bkpt` range guard immediately;
 the linked-address audit covers the known direct static targets, while a real
 boot exercises initialization end-to-end.
 
+## 2026-08-16 (cont'd) — Touch control model: fixed zones -> floating swipe-and-hold
+
+Documenting the now-superseded-but-preserved first gameplay control model:
+four asymmetric, invisible rectangles in logical landscape coordinates map
+directly to held arrow keys. LEFT=`[0,65)x[270,345)`, UP=`[70,100)x[90,300)`,
+DOWN=`[70,100)x[300,368)`, RIGHT=`[105,290)x[260,340)`. Entering a rectangle
+posts keydown, leaving/switching posts keyup, and a two-tic stability filter
+suppresses touch-controller boundary chatter. This worked electrically but
+was difficult to find and operate by feel on the 1.8-inch panel.
+
+Researched common small-screen/mobile game patterns before replacing it.
+Apple's game-control guidance recommends a movement thumbstick that appears
+wherever the player lands their thumb rather than a fixed thumbstick, using as
+large an input area as possible. One-touch-game research likewise reports
+avatar movement gestures performed anywhere on screen, reducing reach and
+occlusion problems. Four-way swipe implementations also warn about rapid axis
+flipping near diagonals and use an axial bias/hysteresis strategy.
+
+Implemented Alexander's proposed swipe-and-hold model as a **floating digital
+joystick** (`TOUCH_CONTROL_SWIPE_HOLD=1` in `i_input.c`):
+
+- Touch anywhere establishes an invisible anchor; no movement happens yet.
+- Drag 24 logical pixels past the anchor to choose the dominant cardinal axis.
+- Holding maintains that Doom arrow key.
+- Sliding around the same anchor can change direction without lifting.
+- Returning inside the dead zone or lifting posts keyup immediately.
+- An 8px dominant-axis bias plus the existing two-tic transition filter avoids
+  diagonal/controller jitter.
+
+The complete original fixed-zone implementation remains compiled in behind
+the selector for immediate fallback and further zone tuning if this experiment
+does not feel good on hardware.
+
+References:
+- https://developer.apple.com/design/human-interface-guidelines/game-controls
+- https://arxiv.org/abs/2106.14505
+- https://maxkrieger.itch.io/crossniq/devlog/9448/systems-breakdown-swipe-movement-controls
+
+## 2026-08-16 (cont'd) — Touch control model: fixed zones -> floating swipe-and-hold
+
+Documenting the now-superseded-but-preserved first gameplay control model:
+four asymmetric, invisible rectangles in logical landscape coordinates map
+directly to held arrow keys. LEFT=`[0,65)x[270,345)`, UP=`[70,100)x[90,300)`,
+DOWN=`[70,100)x[300,368)`, RIGHT=`[105,290)x[260,340)`. Entering a rectangle
+posts keydown, leaving/switching posts keyup, and a two-tic stability filter
+suppresses touch-controller boundary chatter. This worked electrically but
+was difficult to find and operate by feel on the 1.8-inch panel.
+
+Researched common small-screen/mobile game patterns before replacing it.
+Apple's game-control guidance recommends a movement thumbstick that appears
+wherever the player lands their thumb rather than a fixed thumbstick, using as
+large an input area as possible. One-touch-game research likewise reports
+avatar movement gestures performed anywhere on screen, reducing reach and
+occlusion problems. Four-way swipe implementations also warn about rapid axis
+flipping near diagonals and use an axial bias/hysteresis strategy.
+
+Implemented Alexander's proposed swipe-and-hold model as a **floating digital
+joystick** (`TOUCH_CONTROL_SWIPE_HOLD=1` in `i_input.c`):
+
+- Touch anywhere establishes an invisible anchor; no movement happens yet.
+- Drag 24 logical pixels past the anchor to choose the dominant cardinal axis.
+- Holding maintains that Doom arrow key.
+- Sliding around the same anchor can change direction without lifting.
+- Returning inside the dead zone or lifting posts keyup immediately.
+- An 8px dominant-axis bias plus the existing two-tic transition filter avoids
+  diagonal/controller jitter.
+
+The complete original fixed-zone implementation remains compiled in behind
+the selector for immediate fallback and further zone tuning if this experiment
+does not feel good on hardware.
+
+References:
+- https://developer.apple.com/design/human-interface-guidelines/game-controls
+- https://arxiv.org/abs/2106.14505
+- https://maxkrieger.itch.io/crossniq/devlog/9448/systems-breakdown-swipe-movement-controls
+
 ## Open questions
 - **Freeze during actual gameplay after a rapid touch-event burst** (see
   immediately above) - not yet investigated. Suspect the touch-input

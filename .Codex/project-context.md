@@ -21,11 +21,11 @@ DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with touch mo
 
 - Game boots, renders, loads E1M1, and supports combat.
 - Touch boundary chatter is filtered and no longer triggers blocking screen logs.
-- Current movement uses four fixed hold zones and is difficult to operate by feel.
-- A swipe-direction-and-hold control experiment is next.
+- Current experimental movement is a floating four-way digital joystick: touch anywhere, drag, and hold.
+- The original four fixed hold zones remain available via a compile-time selector.
 
 ## Open questions
 
 - Does the 227,944-byte zone eliminate the eventual gameplay freeze?
-- Which one-finger movement model feels best on this small display?
+- Does the floating swipe-and-hold model feel better than fixed zones, and what dead-zone tuning does it need?
 - How should BOOT/menu and weapon switching be safely integrated?
