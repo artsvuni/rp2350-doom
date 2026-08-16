@@ -32,6 +32,8 @@
 #if PICO_ON_DEVICE
 #include "hardware/clocks.h"
 #include "hardware/vreg.h"
+#include "hardware/watchdog.h"
+#include "hardware/structs/watchdog.h"
 #endif
 #endif
 #if USE_PICO_NET
@@ -115,6 +117,16 @@ int main(int argc, char **argv)
     // TEMPORARY diagnostic: on-screen boot log (no serial needed) to find
     // where boot is hanging. See doom/docs/DECISIONS.md.
     bootlog_init();
+    if (watchdog_hw->scratch[0] == 0x4f4f4d21) {
+        uint32_t failed_size = watchdog_hw->scratch[1];
+        uint32_t free_bytes = watchdog_hw->scratch[2];
+        watchdog_hw->scratch[0] = 0; // a manual reset may boot normally
+        char oom_report[40];
+        snprintf(oom_report, sizeof(oom_report), "OOM req=%lu free=%lu",
+                 (unsigned long)failed_size, (unsigned long)free_bytes);
+        bootlog_print(oom_report);
+        while (true) tight_loop_contents();
+    }
     // NOT skipping ahead right now: first real hardware run of pd_render.cpp
     // (previously always stubbed out) produced a distorted/noisy screen
     // instead of a clean hang - need to see exactly which checkpoint was
@@ -162,4 +174,3 @@ int main(int argc, char **argv)
 
     return 0;
 }
-

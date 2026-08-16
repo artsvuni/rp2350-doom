@@ -12,7 +12,9 @@
 ## Stability and performance
 
 - [ ] Confirm extended-play stability with the 227,944-byte zone.
-- [ ] Add low-water/fragmentation diagnostics if gameplay still freezes.
+- [x] Add a persistent exact-allocation OOM diagnostic.
+- [ ] If the next freeze is not OOM, instrument thinker/block lists and multicore rendezvous.
+- [ ] Reassess scaled-display lag after removing per-pixel division.
 - [ ] Make audio output non-blocking and re-enable sound.
 
 ## Completed

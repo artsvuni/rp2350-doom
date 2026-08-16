@@ -829,6 +829,54 @@ References:
 - https://arxiv.org/abs/2106.14505
 - https://maxkrieger.itch.io/crossniq/devlog/9448/systems-breakdown-swipe-movement-controls
 
+## 2026-08-16 (cont'd) — Swipe controls improve play; optimize scaler and persist OOM
+
+First hardware test of the floating swipe-and-hold control model was clearly
+better than fixed zones: still needs tuning, but the game became materially
+more playable. Two remaining observations: full-width rendering felt laggy,
+and rapid shooting during combat still eventually froze after one enemy kill.
+
+The 448x280 scaler's hottest loop computed `output_x * 5 / 7` once per output
+pixel: 125,440 integer divisions per frame on Cortex-M33. Replaced this with an
+incremental 5/7 accumulator that produces the exact same nearest-neighbour
+source indices using adds, compare, and occasional increment. This addresses
+CPU-side scaling cost; the doubled QSPI pixel bandwidth versus the old 320x200
+view remains and may need separate frame-pacing work if lag persists.
+
+The freeze is still ambiguous despite the enlarged 227,944-byte zone. Reworked
+the `Z_Malloc` OOM path into a crash-persistent diagnostic: it writes an `OOM!`
+magic value, failed allocation size, and remaining free bytes into watchdog
+scratch registers 0..2, then watchdog-reboots. Early next boot detects the
+record, clears the magic so a manual reset recovers normally, displays
+`OOM req=<n> free=<n>`, and halts before core1/render DMA can overwrite the
+message. If the next combat freeze neither reboots nor shows this report, OOM
+is ruled out and investigation should move to thinker/list corruption or a
+non-memory deadlock.
+
+## 2026-08-16 (cont'd) — Swipe controls improve play; optimize scaler and persist OOM
+
+First hardware test of the floating swipe-and-hold control model was clearly
+better than fixed zones: still needs tuning, but the game became materially
+more playable. Two remaining observations: full-width rendering felt laggy,
+and rapid shooting during combat still eventually froze after one enemy kill.
+
+The 448x280 scaler's hottest loop computed `output_x * 5 / 7` once per output
+pixel: 125,440 integer divisions per frame on Cortex-M33. Replaced this with an
+incremental 5/7 accumulator that produces the exact same nearest-neighbour
+source indices using adds, compare, and occasional increment. This addresses
+CPU-side scaling cost; the doubled QSPI pixel bandwidth versus the old 320x200
+view remains and may need separate frame-pacing work if lag persists.
+
+The freeze is still ambiguous despite the enlarged 227,944-byte zone. Reworked
+the `Z_Malloc` OOM path into a crash-persistent diagnostic: it writes an `OOM!`
+magic value, failed allocation size, and remaining free bytes into watchdog
+scratch registers 0..2, then watchdog-reboots. Early next boot detects the
+record, clears the magic so a manual reset recovers normally, displays
+`OOM req=<n> free=<n>`, and halts before core1/render DMA can overwrite the
+message. If the next combat freeze neither reboots nor shows this report, OOM
+is ruled out and investigation should move to thinker/list corruption or a
+non-memory deadlock.
+
 ## Open questions
 - **Freeze during actual gameplay after a rapid touch-event burst** (see
   immediately above) - not yet investigated. Suspect the touch-input

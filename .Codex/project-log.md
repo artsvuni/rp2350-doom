@@ -2,6 +2,13 @@
 
 ## 2026-08-16
 
+### 22:31 — Optimize scaled output and persist OOM evidence
+
+- Replaced per-output-pixel 5/7 integer division with an equivalent incremental scaler.
+- Made zone OOM automatically reboot into a persistent allocation-size/free-byte report.
+- Preserved the improved swipe controls; hardware tuning remains open.
+- Commit: included in this diagnostics commit.
+
 ### 22:23 — Add floating swipe-and-hold movement
 
 - Researched floating joysticks, anywhere-on-screen gestures, dead zones, and axial bias.

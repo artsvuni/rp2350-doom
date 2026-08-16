@@ -664,11 +664,20 @@ static void present_frame_to_amoled(void) {
         int output_end = (scanline + 1) * 7 / 5;
         for (int output_y = output_first; output_y < output_end; output_y++) {
             int chunk_row = output_y % PANEL_CHUNK_ROWS;
+            int source_x = 0;
+            int scale_accumulator = 0;
             for (int output_x = 0; output_x < DISPLAY_WIDTH; output_x++) {
-                int source_x = output_x * 5 / 7;
                 panel_chunk[output_x * PANEL_CHUNK_ROWS
                             + (PANEL_CHUNK_ROWS - chunk_row - 1)] =
                     __builtin_bswap16(pixels[source_x]);
+                // Incremental floor(output_x * 5 / 7), avoiding 125,440
+                // integer divisions per frame in this hottest presentation
+                // loop. The exact nearest-neighbour pixel mapping is unchanged.
+                scale_accumulator += 5;
+                if (scale_accumulator >= 7) {
+                    source_x++;
+                    scale_accumulator -= 7;
+                }
             }
 
             if (chunk_row == PANEL_CHUNK_ROWS - 1) {

@@ -28,6 +28,8 @@
 #include <assert.h>
 #if PICO_ON_DEVICE
 #include "bootlog.h"
+#include "hardware/watchdog.h"
+#include "hardware/structs/watchdog.h"
 #endif
 
 // todo graham rework to use shortptr during alloc/free etc.
@@ -349,7 +351,16 @@ Z_MallocNoUser
             // real OOM is visibly distinguishable on-device instead of
             // just inferred from a hang. See DECISIONS.md 2026-08-16
             // (cont'd).
-            { char buf[32]; snprintf(buf, sizeof(buf), "OOM: Z_Malloc size=%d", size); bootlog_print(buf); }
+            // Persist the failure across an automatic watchdog reboot. The
+            // next boot stops on a dedicated report before core1/render DMA
+            // can overwrite it, making OOM distinguishable from any other
+            // gameplay freeze. Scratch 4..7 are SDK reboot bookkeeping, so
+            // reserve 0..2 for this diagnostic.
+            watchdog_hw->scratch[0] = 0x4f4f4d21; // "OOM!"
+            watchdog_hw->scratch[1] = (uint32_t)size;
+            watchdog_hw->scratch[2] = (uint32_t)Z_FreeMemory();
+            watchdog_reboot(0, 0, 10);
+            while (true) tight_loop_contents();
 #endif
             panic("out of memory");
 #else
