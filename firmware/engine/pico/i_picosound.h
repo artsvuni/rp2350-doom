@@ -22,11 +22,11 @@
 #define __I_PICO_SOUND__
 
 #include "pico.h"
+#include <stddef.h>
 
-// Opaque outside this file. Upstream's version is pico_audio_i2s's
-// producer-pool buffer type; ours is our own flat mono sample buffer (see
-// i_picosound.c) - nothing outside i_picosound.c touches its fields, since
-// we don't vendor opl_pico.c (music is stubbed for now, see i_oplmusic.c).
+// Opaque outside this file. The lightweight music backend accesses its mono
+// sample span through I_PicoSoundBufferSamples(), keeping the DMA layout an
+// implementation detail of i_picosound.c.
 typedef struct audio_buffer audio_buffer_t;
 
 #define PICO_SOUND_SAMPLE_FREQ 44100
@@ -36,6 +36,7 @@ typedef struct audio_buffer audio_buffer_t;
 #endif
 
 void I_PicoSoundSetMusicGenerator(void (*generator)(audio_buffer_t *buffer));
+int16_t *I_PicoSoundBufferSamples(audio_buffer_t *buffer, size_t *count);
 bool I_PicoSoundIsInitialized(void);
 void I_PicoSoundFade(bool in);
 bool I_PicoSoundFading(void);

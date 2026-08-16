@@ -965,13 +965,42 @@ correctly on the ES8311/speaker. No music is heard, as expected with
 `DEBUG_NO_MUSIC=1`; this confirms the asynchronous SFX milestone independently
 of the unfinished music backend. Longer combat/freeze testing remains open.
 
+## 2026-08-16 (cont'd) — Add fixed-memory MUSX music experiment
+
+The shareware WAD is not missing music. It contains `D_E1M1` through
+`D_E1M9`, intermission/title/victory tracks, and `GENMIDI`; `whd_gen` explicitly
+converts the music set to compressed `MUSX` and retains each music lump name in
+the WHD named-lump index. The previous silence came only from
+`DEBUG_NO_MUSIC=1` and the placeholder `i_oplmusic.c`.
+
+For the first hardware experiment, chose a small integer synthesizer instead
+of immediately importing the full emu8950 AdLib emulator. Nine static voices
+play the real MUSX note/program/volume stream with triangle, square, saw,
+pulse, and noise waveforms. This is intentionally a lightweight chiptune
+rendering rather than exact OPL timbre: it has a bounded inner loop, no rate
+converter, and mixes into the same non-blocking 512-sample DMA producer buffer
+before SFX are added. The generator is detached whenever no song is active so
+silent music cannot consume continuous mixer/DMA time.
+
+MUSX file and iterator objects are now fixed static storage in the embedded
+configuration, removing the parser's per-song `malloc()` calls. Music state is
+protected by its own cross-core mutex; the audio callback uses a try-lock and
+emits silence instead of blocking if a level transition is changing the song.
+Loop restart remains deferred when `pd_render.cpp` marks a deep render stack.
+
+The release build succeeds with `__end__=0x20047018`, leaving 233,448 bytes in
+the short-pointer zone through `0x20080000`. This is 2,416 bytes less zone than
+the hardware-proven SFX-only build. Hardware confirmation of boot, recognizable
+music, SFX/music balance, frame pacing, and combat stability is still required.
+
 ## Open questions
 - **Freeze during active combat** — not ordinary zone OOM and not cured by
   removing silent audio work or bounding display DMA waits. Hardware-test the
   pixel-exact build next; if it still freezes, add persistent stage/heartbeat
   diagnostics around multicore rendezvous, rendering, and game-tic processing.
-- Continue extended combat testing of the hardware-verified DMA/IRQ SFX path;
-  music remains a separate backend project.
+- Continue extended combat testing of the hardware-verified DMA/IRQ SFX path.
+- Hardware-test the fixed-memory MUSX synthesizer: boot/menu/level transitions,
+  recognizable score, SFX balance, frame pacing, and sustained combat.
 - Touch/PWR input not being detected at all (see above) - next thing to
   debug.
 - What actually drives title-screen advancement in a `PD_COLUMNS` build,

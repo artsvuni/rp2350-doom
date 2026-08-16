@@ -2,6 +2,14 @@
 
 ## 2026-08-16
 
+### 23:48 — Add fixed-memory MUSX music experiment
+
+- Confirmed the shareware WAD and generated WHD contain the Doom music; it was not missing, only disabled behind the stub backend.
+- Added a nine-voice integer MUSX synthesizer mixed through the non-blocking SFX DMA path.
+- Replaced embedded MUSX file/iterator heap allocation with static storage and used a non-blocking cross-core music lock.
+- Verified a release build with 233,448 bytes of short-pointer zone remaining; hardware listening and stability tests are pending.
+- Commit: included in this music-experiment commit.
+
 ### 23:20 — Confirm asynchronous SFX on hardware
 
 - Confirmed the sound-enabled firmware boots and Doom sound effects play correctly through the device speaker.

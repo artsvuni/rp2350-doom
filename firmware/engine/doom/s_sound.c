@@ -698,20 +698,6 @@ void S_StartMusic(int m_id)
 
 void S_ChangeMusic(int musicnum, int looping)
 {
-#if PICO_ON_DEVICE && DEBUG_NO_MUSIC
-    // Music remains separately disabled while sound effects are enabled:
-    // S_Start() (called at the top of every level
-    // load) calls this to start level music, which does a *named* lump
-    // lookup (W_GetNumForName("d_..")) - but our WAD's music is
-    // MUSX_COMPRESSED (custom format, see CMakeLists.txt), so that
-    // lookup very plausibly finds nothing under that name.
-    // W_GetNumForName (unlike W_CheckNumForName) calls I_Error() on a
-    // miss, which NO_IERROR=1 maps to a bare `bkpt` - an unhandled hard
-    // fault with no debugger attached, matching a "froze right after
-    // P_SetupLevel entered, no crash message, no further heartbeat"
-    // report exactly. See doom/docs/DECISIONS.md 2026-08-16 (cont'd).
-    return;
-#endif
     musicinfo_t *music = NULL;
     char namebuf[9];
     void *handle;

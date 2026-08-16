@@ -127,6 +127,15 @@ struct midi_track_iter_s
 #endif
 };
 
+// The embedded build plays one compressed MUSX lump at a time. Keeping its
+// parser objects in fixed storage avoids handing malloc()/free() addresses
+// from the newlib heap to Doom's zone-backed lifetime model. It also removes
+// two small allocations from every level/music transition.
+#if USE_DIRECT_MIDI_LUMP && USE_MUSX
+static midi_file_t static_musx_file;
+static midi_track_iter_t static_musx_iter;
+#endif
+
 
 #if !USE_DIRECT_MIDI_LUMP
 
@@ -614,7 +623,10 @@ static boolean ReadFileHeader(midi_file_t *file, FILE *stream)
 
 void MIDI_FreeFile(midi_file_t *file)
 {
-
+#if USE_DIRECT_MIDI_LUMP && USE_MUSX
+    assert(file == &static_musx_file);
+    memset(&static_musx_file, 0, sizeof(static_musx_file));
+#else
 #if !USE_DIRECT_MIDI_LUMP
     if (file->tracks != NULL)
     {
@@ -628,6 +640,7 @@ void MIDI_FreeFile(midi_file_t *file)
 #endif
 
     free(file);
+#endif
 }
 
 #if !USE_DIRECT_MIDI_LUMP
@@ -703,7 +716,12 @@ midi_track_iter_t *MIDI_IterateTrack(midi_file_t *file, unsigned int track)
 
 //    printf("Begin iterating track %d\n", track);
 //    PrintTrack(&file->tracks[track]);
+#if USE_DIRECT_MIDI_LUMP && USE_MUSX
+    iter = &static_musx_iter;
+    memset(iter, 0, sizeof(*iter));
+#else
     iter = malloc(sizeof(*iter));
+#endif
     iter->track = &file->tracks[track];
     MIDI_RestartIterator(iter);
     return iter;
@@ -711,7 +729,12 @@ midi_track_iter_t *MIDI_IterateTrack(midi_file_t *file, unsigned int track)
 
 void MIDI_FreeIterator(midi_track_iter_t *iter)
 {
+#if USE_DIRECT_MIDI_LUMP && USE_MUSX
+    assert(iter == &static_musx_iter);
+    memset(&static_musx_iter, 0, sizeof(static_musx_iter));
+#else
     free(iter);
+#endif
 }
 
 // Get the time until the next MIDI event in a track.
@@ -978,11 +1001,8 @@ midi_file_t *MUSX_LoadRaw(const void *data, int len) {
         return NULL;
     }
 #endif
-    midi_file_t *file = malloc(sizeof(midi_file_t));
-    if (file == NULL)
-    {
-        return NULL;
-    }
+    midi_file_t *file = &static_musx_file;
+    memset(file, 0, sizeof(*file));
     file->tracks[0].buffer_size = *(uint32_t *)(data+4);
     assert(file->tracks[0].buffer_size == len - 8);
     file->tracks[0].buffer = data + 8;

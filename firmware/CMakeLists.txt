@@ -257,11 +257,8 @@ target_compile_definitions(doom PRIVATE
     # firmware size instead of upstream's tight 0x10048000.
     TINY_WAD_ADDR=0x10200000
 
-    # Sound effects use the non-blocking DMA/IRQ audio_pio queue. Music is a
-    # separate unfinished path: i_oplmusic.c is currently a stub, and its
-    # named-lump lookup is not valid for this MUSX_COMPRESSED WAD. Keep music
-    # off without suppressing the now-supported sound-effect pipeline.
-    DEBUG_NO_MUSIC=1
+    # Sound effects and the fixed-memory MUSX music synthesizer share the
+    # non-blocking DMA/IRQ audio_pio queue.
 )
 # Deliberately NOT set (unlike upstream's RP2040-cramped build):
 # PICO_TIME_DEFAULT_ALARM_POOL_DISABLED / _MAX_TIMERS, PICO_DISABLE_SHARED_IRQ_HANDLERS,

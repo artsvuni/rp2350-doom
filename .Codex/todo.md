@@ -11,13 +11,14 @@
 
 ## Stability and performance
 
-- [ ] Confirm extended-play stability with the current 235,864-byte zone.
+- [ ] Confirm extended-play stability with the current 233,448-byte zone.
 - [x] Add a persistent exact-allocation OOM diagnostic.
 - [ ] Hardware-test centered pixel-exact 320x200 video during active combat.
 - [ ] If 320x200 still freezes, add persistent core/render/game-tic heartbeat stages.
 - [x] Make SFX output DMA/IRQ-driven and non-blocking, then re-enable sound effects.
 - [ ] Hardware-test repeated menu SFX, rapid firing, multi-enemy combat, and frame pacing.
-- [ ] Implement a real music backend and compatible MUSX lookup/playback path.
+- [x] Implement a fixed-memory MUSX music backend and compatible named-lump playback path.
+- [ ] Hardware-test music boot/transitions, recognizability, SFX balance, frame pacing, and combat stability.
 
 ## Completed
 

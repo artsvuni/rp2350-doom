@@ -19,9 +19,8 @@
 //	System interface for sound - ADPCM sound-effect mixing is unchanged
 //	from upstream (it never touched pico_audio_i2s directly), only the
 //	output path is swapped for mp3player's proven ES8311/PIO I2S driver.
-//	Music is a stub for now (see i_oplmusic.c) - the music_generator hook
-//	below is wired up but never populated, so mixing only ever produces
-//	sound effects. See doom/docs/DECISIONS.md.
+//	The lightweight MUSX generator fills this same mono mix buffer before
+//	sound effects are added, so both share one bounded, non-blocking queue.
 //
 
 #include "config.h"
@@ -111,7 +110,10 @@ static const int index_table[] = {
 };
 // =============================
 
-static void (*music_generator)(audio_buffer_t *buffer);
+// Aligned function pointers are single-copy atomic on Cortex-M33. Volatile
+// plus a per-update snapshot prevents a concurrent stop/track transition from
+// turning the second load of an if-and-call sequence into a null call.
+static void (*volatile music_generator)(audio_buffer_t *buffer);
 static struct audio_buffer mix_buffer;
 
 static volatile boolean sound_initialized = false;
@@ -352,7 +354,8 @@ static void I_Pico_UpdateSound(void)
     // The DMA backend already emits silence on underflow. Do not eagerly
     // fill both producer buffers with silence: that wastes mixer time and
     // adds up to two blocks of latency before a newly-triggered SFX starts.
-    bool needs_mix = music_generator != NULL
+    void (*generator)(audio_buffer_t *buffer) = music_generator;
+    bool needs_mix = generator != NULL
                   || (fade_state != FS_NONE && fade_state != FS_SILENT);
     for (int ch = 0; ch < NUM_SOUND_CHANNELS && !needs_mix; ch++) {
         needs_mix = is_channel_playing(ch);
@@ -367,8 +370,8 @@ static void I_Pico_UpdateSound(void)
     }
 
     int16_t *samples = mix_buffer.samples;
-    if (music_generator) {
-        music_generator(&mix_buffer);
+    if (generator) {
+        generator(&mix_buffer);
     } else {
         memset(samples, 0, sizeof(mix_buffer.samples));
     }
@@ -515,6 +518,11 @@ bool I_PicoSoundIsInitialized(void) {
 
 void I_PicoSoundSetMusicGenerator(void (*generator)(audio_buffer_t *buffer)) {
     music_generator = generator;
+}
+
+int16_t *I_PicoSoundBufferSamples(audio_buffer_t *buffer, size_t *count) {
+    *count = MIX_BUFFER_SAMPLES;
+    return buffer->samples;
 }
 
 void I_PicoSoundFade(bool in) {
