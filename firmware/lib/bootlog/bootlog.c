@@ -12,21 +12,25 @@
 #include "pico/mutex.h"
 #include <string.h>
 
-#define BOOTLOG_HEIGHT 64 // grown back from 32: now shows a scrolling
-                          // history (HISTORY_LINES, below) instead of a
-                          // single line, so a freeze shows the last few
-                          // checkpoints leading up to it, not just the
-                          // very last one - and no single message gets
-                          // overwritten before it can be read/photographed.
-                          // RAM budget has had headroom for this again
-                          // since panel_window shrank (~105KB) - see
-                          // doom/docs/DECISIONS.md.
+#define BOOTLOG_HEIGHT 90 // 5 lines. Tried growing this further to a
+                          // full-panel, many-DMA-transfers-per-print
+                          // design (2026-08-16) to show much more
+                          // history at once - that froze boot itself,
+                          // very early, most likely the same AMOLED
+                          // timing flakiness found earlier this session
+                          // with AMOLED_1IN8_DisplayWindows()'s per-row
+                          // loop, just newly exposed by doing many rapid
+                          // sequential transfers per call instead of one.
+                          // Reverted back to this single-buffer, single-
+                          // transfer-per-print design, which reliably
+                          // reproduces the actual target bug without
+                          // introducing a new one. See DECISIONS.md.
 #define LINE_HEIGHT (Font16.Height + 2)
 // Font16.Height is a runtime struct member access (Font16 is extern), not
 // a real compile-time constant - fine for the runtime arithmetic below,
 // but invalid as a static array's dimension. Font16 is a fixed 16px font
 // (see lib/fonts/font16.c) - hardcode that fact here instead.
-#define HISTORY_LINES (BOOTLOG_HEIGHT / (16 + 2)) // = 3
+#define HISTORY_LINES (BOOTLOG_HEIGHT / (16 + 2)) // = 5
 #define MSG_MAXLEN 40
 
 // Full panel width (matches the buffer's natural stride - no repacking

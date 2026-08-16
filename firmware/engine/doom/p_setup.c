@@ -747,13 +747,10 @@ void P_LoadBlockMap (int lump)
 #error wrong format
 #endif
     blockmaplump = W_CacheLumpNum(lump, PU_LEVEL);
-#if PICO_ON_DEVICE
-    // DOOM_SMALL=1 auto-defines USE_ROWAD=1 (doomtype.h) - this is the
-    // branch actually taken, not the #if !USE_ROWAD one above (which
-    // has its own bm1-bm4 checkpoints that never fire). Found 2026-08-16
-    // after a round of testing showed none of those - see DECISIONS.md.
-    bootlog_print("bm1: W_CacheLumpNum OK");
-#endif
+    // bm1 (W_CacheLumpNum OK) removed - confirmed fine (this is a
+    // trivial pointer-into-flash function under DOOM_SMALL=1's
+    // USE_ROWAD=1, doesn't touch the zone at all), trimmed for the same
+    // reason as pl1b/pl1d. See DECISIONS.md 2026-08-16.
 #endif
 #if !USE_WHD
     blockmap = blockmaplump + 4;
@@ -767,9 +764,8 @@ void P_LoadBlockMap (int lump)
     bmaporgy = blockmaplump[1]<<FRACBITS;
     bmapwidth = blockmaplump[2];
     bmapheight = blockmaplump[3];
-#if PICO_ON_DEVICE
-    { char buf[32]; snprintf(buf, sizeof(buf), "bm2: w=%d h=%d", bmapwidth, bmapheight); bootlog_print(buf); }
-#endif
+    // bm2 (w/h) removed - confirmed sane values (36x23) already, trimmed
+    // for the same reason as pl1b/pl1d/bm1.
 
 #if PRINT_LEVEL_SIZE
 #if !USE_WHD
@@ -1077,9 +1073,9 @@ P_SetupLevel
 
     // Make sure all sounds are stopped before Z_FreeTags.
     S_Start ();
-#if PICO_ON_DEVICE
-    bootlog_print("pl1b: S_Start OK");
-#endif
+    // pl1b (S_Start OK) removed - confirmed fine, trimmed so pl1c stays
+    // within the visible history window alongside the later freeze
+    // state. See DECISIONS.md 2026-08-16.
 
     Z_FreeTags (PU_LEVEL, PU_PURGELEVEL-1);
 #if PICO_ON_DEVICE
@@ -1088,9 +1084,7 @@ P_SetupLevel
 
     // UNUSED W_Profile ();
     P_InitThinkers ();
-#if PICO_ON_DEVICE
-    bootlog_print("pl1d: P_InitThinkers OK");
-#endif
+    // pl1d (P_InitThinkers OK) removed - same reason as pl1b.
 
 #if !NO_USE_RELOAD
     // if working with a devlopment map, reload it
