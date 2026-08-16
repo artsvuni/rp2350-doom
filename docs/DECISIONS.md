@@ -960,13 +960,18 @@ The linked build succeeds with `__end__=0x200466a8`, leaving 235,864 bytes in
 the short-pointer zone through `0x20080000`. Hardware testing is still required
 for codec output, menu progression, combat audio, performance, and stability.
 
+Hardware result: the build boots, progresses normally, and sound effects play
+correctly on the ES8311/speaker. No music is heard, as expected with
+`DEBUG_NO_MUSIC=1`; this confirms the asynchronous SFX milestone independently
+of the unfinished music backend. Longer combat/freeze testing remains open.
+
 ## Open questions
 - **Freeze during active combat** — not ordinary zone OOM and not cured by
   removing silent audio work or bounding display DMA waits. Hardware-test the
   pixel-exact build next; if it still freezes, add persistent stage/heartbeat
   diagnostics around multicore rendezvous, rendering, and game-tic processing.
-- Hardware-test the new DMA/IRQ SFX path through repeated menu sounds and
-  sustained combat; music remains a later, separate backend project.
+- Continue extended combat testing of the hardware-verified DMA/IRQ SFX path;
+  music remains a separate backend project.
 - Touch/PWR input not being detected at all (see above) - next thing to
   debug.
 - What actually drives title-screen advancement in a `PD_COLUMNS` build,

@@ -2,6 +2,13 @@
 
 ## 2026-08-16
 
+### 23:20 — Confirm asynchronous SFX on hardware
+
+- Confirmed the sound-enabled firmware boots and Doom sound effects play correctly through the device speaker.
+- Confirmed the absence of music is expected because `DEBUG_NO_MUSIC=1` still isolates the stub backend.
+- Preserved this working SFX state as a stable milestone before music experiments.
+- Commit: included in this hardware-confirmation commit.
+
 ### 23:12 — Re-enable sound effects through buffered DMA
 
 - Replaced blocking per-sample PIO writes with a non-blocking two-buffer DMA/IRQ queue that emits silence on underflow.
