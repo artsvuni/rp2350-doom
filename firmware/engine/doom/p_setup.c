@@ -531,8 +531,15 @@ void P_LoadThings (int lump)
         static int print_count;
         if (print_count < 30 && i >= 35 && i <= 60) {
             print_count++;
-            char buf[32];
-            snprintf(buf, sizeof(buf), "th#%d/%d type=%d", i, numthings, (int)SHORT(mt->type));
+            char buf[40];
+            // free= added (2026-08-16 cont'd): testing whether this is
+            // genuine zone exhaustion now that panel_window (128000
+            // bytes) is reclaimed from the zone's own capacity - Z_Malloc
+            // panics silently (via pico-sdk's panic() -> printf() over
+            // USB stdio, which blocks forever with no host reading, per
+            // the printf-freeze lesson from earlier tonight) if it scans
+            // the whole list without finding a big enough block.
+            snprintf(buf, sizeof(buf), "th#%d/%d ty=%d fr=%d", i, numthings, (int)SHORT(mt->type), Z_FreeMemory());
             bootlog_print(buf);
         }
     }

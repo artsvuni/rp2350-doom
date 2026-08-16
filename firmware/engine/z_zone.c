@@ -339,6 +339,18 @@ Z_MallocNoUser
         {
             // scanned all the way around the list
 #if DOOM_TINY
+#if PICO_ON_DEVICE
+            // pico-sdk's panic() calls printf()/puts() over stdio (USB
+            // CDC here) - per tonight's own earlier finding, unguarded
+            // USB printf blocks forever with no host reading, which
+            // would turn genuine "out of memory" into an identical
+            // silent freeze to the corruption bug just fixed. Print via
+            // bootlog (proven reliable, no stdio involved) first so a
+            // real OOM is visibly distinguishable on-device instead of
+            // just inferred from a hang. See DECISIONS.md 2026-08-16
+            // (cont'd).
+            { char buf[32]; snprintf(buf, sizeof(buf), "OOM: Z_Malloc size=%d", size); bootlog_print(buf); }
+#endif
             panic("out of memory");
 #else
             I_Error ("Z_Malloc: failed on allocation of %i bytes", size);

@@ -24,10 +24,15 @@
 // not a real compile-time constant - fine for the runtime arithmetic
 // below, but invalid as a static array's dimension. Font12 is a fixed
 // 12px font (see lib/fonts/font12.c) - hardcode that fact here instead.
-// Back to 7 (2026-08-16 cont'd): panel_window is re-enabled now that the
-// zone-corruption bug is fixed (see DECISIONS.md), so its 128000 bytes
-// are no longer available for a bigger on-screen history.
-#define HISTORY_LINES 7
+// Down to 3 (2026-08-16 cont'd): confirmed genuine zone exhaustion
+// (OOM: Z_Malloc size=680 while spawning thing #48) once panel_window
+// was re-enabled - the combined static footprint of panel_window
+// (128000 bytes) + this 7-line buffer (72128 bytes) leaves the zone
+// with LESS capacity than the config that finished loading the level
+// cleanly (rendering disabled, no panel_window, even with an 18-line
+// buffer). Past corruption-hunting now; shrinking back to 3 lines frees
+// ~41KB back to the zone. See DECISIONS.md.
+#define HISTORY_LINES 3
 #define BOOTLOG_HEIGHT (HISTORY_LINES * (12 + 2)) // = 98
 #define MSG_MAXLEN 40
 

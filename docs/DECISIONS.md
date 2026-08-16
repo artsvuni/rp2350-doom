@@ -632,26 +632,40 @@ across `z_zone.c`, `m_menu.c`, `d_main.c`, `i_video.c` - safe to leave (all
 bounded, won't spam indefinitely) but should be stripped once the port
 stabilizes.
 
-**New, separate freeze found immediately after**: with real rendering
-re-enabled, starting a game now freezes partway through `P_LoadThings()`
-- confirmed stuck right after thing index 48 (doomednum 2035, the first
-exploding barrel) out of 138. This did *not* happen when rendering was
-disabled (the same exact loop completed cleanly then), so it's suspected
-to be a core0/core1 timing or rendezvous issue exposed by real rendering
-load, not a repeat of the zone corruption above. A bracket checkpoint around that specific `P_SpawnMapThing(48)` call
-was added and tested on hardware: `sm1: before P_SpawnMapThing(48)`
-prints, `sm2: after` never does - confirming the hang is **inside**
-`P_SpawnMapThing()`/`P_SpawnMobj()` itself while spawning the barrel
-(doomednum 2035), not somewhere after it returns. Next session should
-bisect inside `P_SpawnMobj`/`P_SpawnMapThing` next (`p_mobj.c` /
-`p_setup.c`'s `P_SpawnMapThing`).
+**New, separate freeze found immediately after - RESOLVED, genuine zone
+exhaustion, not a race**: with real rendering re-enabled, starting a game
+froze partway through `P_LoadThings()`, stuck right after thing index 48
+(doomednum 2035, the first exploding barrel) out of 138. This did *not*
+happen when rendering was disabled, which initially looked like a
+core0/core1 timing issue. A bracket checkpoint (`sm1`/`sm2` around that
+specific `P_SpawnMapThing(48)` call) confirmed the hang was **inside**
+`P_SpawnMobj()` itself, not after it returned - and pico-sdk's own
+`panic()` (which `DOOM_TINY`'s `Z_Malloc` calls on genuine
+out-of-memory) calls `vprintf()`/`puts()` over stdio (USB CDC in this
+build), which - per the earlier printf-freeze lesson this same session -
+blocks forever with no host reading. That's a silent, total freeze
+indistinguishable from a deadlock, with zero further checkpoints able to
+print. Patched `Z_Malloc`'s OOM path (`z_zone.c`) to `bootlog_print()` a
+message *before* calling `panic()`, and added `Z_FreeMemory()` to the
+`P_LoadThings()` per-thing checkpoint. Confirmed on hardware: `fr=0`
+already by thing #44 (tiny decorations kept barely fitting), then
+`OOM: Z_Malloc size=680` at thing #48 (the barrel, needing a full
+`mobjfull_t`) - genuine exhaustion, not corruption or a race.
+
+**Why now specifically**: re-enabling `panel_window` (128000 bytes)
+shrinks the zone's own capacity by that much (the zone's ceiling is
+fixed at `SHORTPTR_BASE+0x40000`, so anything used for static RAM before
+`__end__` comes directly out of the zone's side) - combined with
+bootlog's 7-line buffer (72128 bytes), the working "corruption-fixed"
+config was actually using *more* total static RAM (200128 bytes) than
+the disabled-rendering config that finished loading the whole level
+cleanly (185472 bytes, all in an 18-line bootlog with no panel_window at
+all). Past corruption-hunting now, so bootlog's history was shrunk from
+7 lines down to 3 (72128 -> 30912 bytes, reclaiming ~41KB back to the
+zone - comfortably more than the measured shortfall). Confirmed on
+hardware: **the game runs** - level loads fully and is playable.
 
 ## Open questions
-- **Thing-spawn freeze with real rendering enabled** (see immediately
-  above) - the current blocker, not yet root-caused. Confirmed stuck
-  *inside* `P_SpawnMapThing(48)`/`P_SpawnMobj()` itself while spawning
-  the first exploding barrel (doomednum 2035). Suspect core0/core1 timing, since the
-  identical code path is clean with rendering disabled.
 - Making the audio path non-blocking (see above) - the real fix,
   not yet attempted. `DEBUG_NO_SOUND=1` is a working stopgap.
 - Touch/PWR input not being detected at all (see above) - next thing to
