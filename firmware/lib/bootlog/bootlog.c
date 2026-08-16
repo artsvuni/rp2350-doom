@@ -10,19 +10,32 @@
 #include "GUI_Paint.h"
 #include "fonts.h"
 #include "pico/mutex.h"
+#include <string.h>
 
-#define BOOTLOG_HEIGHT 32 // shrunk again: pd_render.cpp's real (non-stub) static state pushed .bss
-                          // over RAM by ~11KB - combined with bootlog_skip_until() in i_main.c to
-                          // skip straight to the new checkpoints, 1 line is enough. See DECISIONS.md.
+#define BOOTLOG_HEIGHT 64 // grown back from 32: now shows a scrolling
+                          // history (HISTORY_LINES, below) instead of a
+                          // single line, so a freeze shows the last few
+                          // checkpoints leading up to it, not just the
+                          // very last one - and no single message gets
+                          // overwritten before it can be read/photographed.
+                          // RAM budget has had headroom for this again
+                          // since panel_window shrank (~105KB) - see
+                          // doom/docs/DECISIONS.md.
 #define LINE_HEIGHT (Font16.Height + 2)
-#define MAX_LINES (BOOTLOG_HEIGHT / LINE_HEIGHT)
+// Font16.Height is a runtime struct member access (Font16 is extern), not
+// a real compile-time constant - fine for the runtime arithmetic below,
+// but invalid as a static array's dimension. Font16 is a fixed 16px font
+// (see lib/fonts/font16.c) - hardcode that fact here instead.
+#define HISTORY_LINES (BOOTLOG_HEIGHT / (16 + 2)) // = 3
+#define MSG_MAXLEN 40
 
 // Full panel width (matches the buffer's natural stride - no repacking
 // needed), Y-windowed, presented via AMOLED_1IN8_DisplayWindowPacked()'s
 // single DMA transfer - AMOLED_1IN8_DisplayWindows() proved intermittently
 // unreliable on this hardware. See doom/docs/DECISIONS.md.
 static UWORD fb[AMOLED_1IN8_WIDTH * BOOTLOG_HEIGHT];
-static int next_line;
+static char history[HISTORY_LINES][MSG_MAXLEN];
+static int history_count; // valid entries so far, caps at HISTORY_LINES
 static int print_count;
 static int skip_count;
 
@@ -31,9 +44,9 @@ static int skip_count;
 // I_Pico_UpdateSound() - which has its own checkpoints - is called from
 // pd_render.cpp's SafeUpdateSound() on EITHER core (whichever wins that
 // function's own mutex_try_enter race). AMOLED_1in8.c's dma_tx_mutex only
-// protects the actual DMA transfer; it says nothing about fb[]/next_line/
+// protects the actual DMA transfer; it says nothing about fb[]/history/
 // print_count here, which get read and written BEFORE that call, with no
-// protection at all. Two concurrent callers modifying fb[]/next_line at
+// protection at all. Two concurrent callers modifying fb[]/history at
 // the same time is a very plausible explanation for bootlog text showing
 // up in screen locations its own code can never target (its window is
 // hardcoded to Y:[0,BOOTLOG_HEIGHT)) - found 2026-08-16 chasing a
@@ -71,7 +84,7 @@ void bootlog_init(void)
     Paint_SetRotate(ROTATE_0);
     Paint_Clear(WHITE);
     AMOLED_1IN8_DisplayWindowPacked(0, 0, AMOLED_1IN8_WIDTH, BOOTLOG_HEIGHT, fb);
-    next_line = 0;
+    history_count = 0;
 }
 
 void bootlog_print(const char *msg)
@@ -84,12 +97,20 @@ void bootlog_print(const char *msg)
         return;
     }
 
-    if (next_line >= MAX_LINES) {
-        Paint_Clear(WHITE);
-        next_line = 0;
+    // Shift older messages up, insert the new one at the bottom - always
+    // shows the last HISTORY_LINES checkpoints, oldest at top.
+    for (int i = 0; i < HISTORY_LINES - 1; i++) {
+        memcpy(history[i], history[i + 1], MSG_MAXLEN);
     }
-    Paint_DrawString_EN(2, next_line * LINE_HEIGHT, msg, &Font16, BLACK, WHITE);
-    next_line++;
+    strncpy(history[HISTORY_LINES - 1], msg, MSG_MAXLEN - 1);
+    history[HISTORY_LINES - 1][MSG_MAXLEN - 1] = 0;
+    if (history_count < HISTORY_LINES) history_count++;
+
+    Paint_Clear(WHITE);
+    int start = HISTORY_LINES - history_count;
+    for (int i = start; i < HISTORY_LINES; i++) {
+        Paint_DrawString_EN(2, (i - start) * LINE_HEIGHT, history[i], &Font16, BLACK, WHITE);
+    }
     AMOLED_1IN8_DisplayWindowPacked(0, 0, AMOLED_1IN8_WIDTH, BOOTLOG_HEIGHT, fb);
 
     mutex_exit(&bootlog_mutex);

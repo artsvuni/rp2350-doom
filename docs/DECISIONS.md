@@ -510,7 +510,58 @@ are the functions to redesign; `mclk_pio_init()`/`dout_pio_init()` (PIO
 program setup) likely don't need to change, only how samples get handed
 to the PIO SM's FIFO.
 
+## 2026-08-16 (cont'd) — Level-load freeze root-caused to zone list corruption, not exhaustion
+With `DEBUG_NO_SOUND=1` (sound/music both stubbed - see above), the menu
+became fully navigable, but starting an actual game (New Game -> episode
+-> skill) froze reliably. Checkpoint-bisected through
+`G_DoNewGame -> G_InitNew -> G_DoLoadLevel -> P_SetupLevel ->
+P_LoadBlockMap`, each round of testing moving the freeze point further
+(a genuinely new, first-time-exercised code path - real map geometry
+loading, never reached before this session). `S_Start`/`Z_FreeTags`/
+`P_InitThinkers` all confirmed fine; narrowed to `Z_Malloc(1656, PU_LEVEL,
+0)` for `blocklinks` (tiny allocation) appearing to hang.
+
+Added a `Z_FreeMemory()` call to a checkpoint right before that
+allocation to check available zone space - it reported `free=0`, which
+initially looked like confirmation of genuine zone exhaustion (upstream's
+own docs, kilograham.github.io/rp2040-doom/speed_and_ram.html, state a
+real level can use up to ~45K of their ~58K total heap - very plausible
+given our own zone margin measured around the same ballpark).
+
+**That diagnosis was wrong**, caught only because of a bootlog UI
+improvement made in the same session (switching from a single
+overwritten line to a 3-line scrolling history, at Alexander's
+suggestion): a message that would have been instantly overwritten and
+invisible in single-line mode turned out to be sitting right there -
+`zfm: stuck blk=00000000 tag=0`. This is `Z_FreeMemory()`'s own bounded
+iteration guard (added earlier alongside `Z_FreeTags`'s identical guard -
+see above) firing: it walked `mainzone`'s block linked list 20000+ times
+without reaching the sentinel, meaning the list is **corrupted** - some
+block's `sp_next` decodes to a null shortptr, and the walk doesn't
+recognize that as anywhere near the end. The `free=0` result was an
+artifact of the walk being cut short right after the corruption point,
+not a real free-byte count.
+
+**Not yet found**: what actually corrupts the list, or when. Investigated
+and ruled out `W_CacheLumpNum()` (called for the blockmap lump right
+before this) as the culprit - `DOOM_TINY=1` makes it a trivial inline
+function (`w_wad.h:107`) that returns a direct pointer into memory-mapped
+flash and never touches the zone allocator at all. Since `Z_FreeTags`
+(which walks the identical list, with the identical guard) reported no
+issue earlier in the same call chain, either something non-obvious
+between the two calls corrupts it, or - more likely given how little
+happens in between - `Z_FreeTags`'s own guard *also* fired but scrolled
+off the 3-line history before it could be read (many checkpoints exist
+between the two calls). A `Z_FreeMemory()` checkpoint was also added at
+`D_StartGameLoop` (before ANY menu interaction) specifically to test
+whether the corruption predates all user interaction entirely - not yet
+observed, since attention was on the later freeze point when this build
+was tested. Next step: watch for a "stuck" message immediately at boot/
+title-screen time, before touching the menu at all.
+
 ## Open questions
+- Where/when the zone list actually gets corrupted (see above) - the
+  real remaining question for the level-load freeze.
 - Making the audio path non-blocking (see above) - the real fix,
   not yet attempted. `DEBUG_NO_SOUND=1` is a working stopgap.
 - Touch/PWR input not being detected at all (see above) - next thing to

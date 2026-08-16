@@ -658,13 +658,30 @@ int Z_FreeMemory (void)
 {
     memblock_t*		block;
     int			free;
-	
+
     free = 0;
 
+#if PICO_ON_DEVICE
+    // Same bounded-guard pattern as Z_FreeTags (see there) - this walks
+    // the identical mainzone->blocklist, but this is its own first-ever
+    // call, at a LATER point in execution (after W_CacheLumpNum cached
+    // the blockmap lump) than Z_FreeTags' first call succeeded at. If
+    // this one gets stuck, that call is a strong suspect for corrupting
+    // the zone list. See doom/docs/DECISIONS.md 2026-08-16 (cont'd).
+    int guard = 0;
+#endif
     for (block = memblock_next(&mainzone->blocklist) ;
          block != &mainzone->blocklist;
          block = memblock_next(block))
     {
+#if PICO_ON_DEVICE
+        if (++guard > 20000) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "zfm: stuck blk=%p tag=%d", (void*)block, block->tag);
+            bootlog_print(buf);
+            break;
+        }
+#endif
         if (block->tag == PU_FREE || block->tag >= PU_PURGELEVEL)
             free += memblock_size(block);
     }

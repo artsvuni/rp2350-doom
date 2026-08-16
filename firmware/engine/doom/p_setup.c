@@ -747,6 +747,13 @@ void P_LoadBlockMap (int lump)
 #error wrong format
 #endif
     blockmaplump = W_CacheLumpNum(lump, PU_LEVEL);
+#if PICO_ON_DEVICE
+    // DOOM_SMALL=1 auto-defines USE_ROWAD=1 (doomtype.h) - this is the
+    // branch actually taken, not the #if !USE_ROWAD one above (which
+    // has its own bm1-bm4 checkpoints that never fire). Found 2026-08-16
+    // after a round of testing showed none of those - see DECISIONS.md.
+    bootlog_print("bm1: W_CacheLumpNum OK");
+#endif
 #endif
 #if !USE_WHD
     blockmap = blockmaplump + 4;
@@ -760,6 +767,9 @@ void P_LoadBlockMap (int lump)
     bmaporgy = blockmaplump[1]<<FRACBITS;
     bmapwidth = blockmaplump[2];
     bmapheight = blockmaplump[3];
+#if PICO_ON_DEVICE
+    { char buf[32]; snprintf(buf, sizeof(buf), "bm2: w=%d h=%d", bmapwidth, bmapheight); bootlog_print(buf); }
+#endif
 
 #if PRINT_LEVEL_SIZE
 #if !USE_WHD
@@ -781,7 +791,13 @@ void P_LoadBlockMap (int lump)
     printf("BLOCKLINKS alloc %d links x 0x%03x : size = %08x\n", bmapwidth * bmapheight, (int)sizeof(*blocklinks), count);
 #endif
 
+#if PICO_ON_DEVICE
+    { char buf[40]; snprintf(buf, sizeof(buf), "bm3: before Zm %d free=%d", count, Z_FreeMemory()); bootlog_print(buf); }
+#endif
     blocklinks = Z_Malloc(count, PU_LEVEL, 0);
+#if PICO_ON_DEVICE
+    bootlog_print("bm4: Z_Malloc OK");
+#endif
     memset(blocklinks, 0, count);
 #if PICO_ON_DEVICE
     bootlog_print("bm5: P_LoadBlockMap done");

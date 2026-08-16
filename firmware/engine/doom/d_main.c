@@ -613,7 +613,13 @@ void D_DoomLoop (void)
 
     D_StartGameLoop();
 #if PICO_ON_DEVICE
-    bootlog_print("21: D_StartGameLoop OK");
+    // Baseline check (2026-08-16, see DECISIONS.md): is the zone already
+    // near-exhausted right here, before any menu navigation, or does it
+    // get consumed progressively by menu/title-screen WAD-lump caching?
+    // free=0 was confirmed right before a small (1656 byte) level-load
+    // allocation - this tells us whether that's baseline boot overhead
+    // or accumulated menu-navigation cost.
+    { char buf[32]; snprintf(buf, sizeof(buf), "21: loop start free=%d", Z_FreeMemory()); bootlog_print(buf); }
 #endif
 
     if (testcontrols)
