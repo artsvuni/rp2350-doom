@@ -257,10 +257,13 @@ target_compile_definitions(doom PRIVATE
     # firmware size instead of upstream's tight 0x10048000.
     TINY_WAD_ADDR=0x10200000
 
-    # TEMPORARY (see doom/docs/DECISIONS.md 2026-08-16): skips S_StartSound()
-    # entirely to test whether the deterministic "second interaction always
-    # freezes" bug is really in the audio path. Remove this line to
-    # re-enable sound once resolved either way.
+    # TEMPORARY (see doom/docs/DECISIONS.md 2026-08-16): skips both
+    # S_StartSound() (sound effects - our audio_pio driver blocks the
+    # caller for real, upstream's doesn't, a real architectural gap not
+    # yet fixed) and S_ChangeMusic() (level music - a named lump lookup
+    # that likely doesn't exist for our MUSX_COMPRESSED WAD, hitting an
+    # I_Error()->bkpt hard fault via NO_IERROR=1, also not yet fixed).
+    # Remove this line to re-enable sound/music once either is resolved.
     DEBUG_NO_SOUND=1
 )
 # Deliberately NOT set (unlike upstream's RP2040-cramped build):

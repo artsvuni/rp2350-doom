@@ -448,21 +448,46 @@ Z_FreeTags
 {
     memblock_t*	block;
     memblock_t*	next;
-	
+
+#if PICO_ON_DEVICE
+    bootlog_print("zft1: Z_FreeTags entered");
+    int guard = 0;
+#endif
     for (block = memblock_next(&mainzone->blocklist) ;
 	 block != &mainzone->blocklist ;
 	 block = next)
     {
+#if PICO_ON_DEVICE
+        // First time this list is ever walked-and-freed in bulk (all
+        // prior zone use was pure allocation) - if our shortptr-based
+        // "next" links have any latent corruption, this bounded guard
+        // catches an infinite/cyclic loop instead of hanging forever,
+        // and the printed address/tag tells us where it went wrong.
+        // See doom/docs/DECISIONS.md 2026-08-16 (cont'd).
+        if (++guard > 20000) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "zft: stuck blk=%p tag=%d", (void*)block, block->tag);
+            bootlog_print(buf);
+            break;
+        }
+#endif
 	// get link before freeing
 	next = memblock_next(block);
 
 	// free block?
 	if (block->tag == PU_FREE)
 	    continue;
-	
+
 	if (block->tag >= lowtag && block->tag <= hightag)
 	    Z_Free ( (byte *)block+sizeof(memblock_t));
     }
+#if PICO_ON_DEVICE
+    {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "zft2: done, %d blocks", guard);
+        bootlog_print(buf);
+    }
+#endif
 }
 
 

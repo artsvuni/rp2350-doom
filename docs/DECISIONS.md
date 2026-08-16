@@ -467,9 +467,52 @@ interaction), and read the `as1`/`as1b`/`as2` channel-state checkpoints
 already in place in `i_picosound.c`'s `I_Pico_StartSound()` - they were
 added but never actually read before the sound-off test intervened.
 
+## 2026-08-16 (cont'd) — Likely real cause of the audio freeze found (via upstream comparison)
+Fetched upstream's actual `src/pico/i_picosound.c` (the file ours was
+adapted from) from the `kilograham/rp2040-doom` repo to compare
+architecture, per a suggestion to check whether other ports/forums hit
+this class of bug before spending more time on checkpoint bisection.
+
+Upstream's `I_Pico_UpdateSound()` calls
+`take_audio_buffer(producer_pool, false)` - the `false` is
+non-blocking: if the buffer pool (managed by `pico_audio_i2s`) has no
+free buffer, it returns null and the function just skips that tic's
+audio entirely, doing nothing. The actual I2S output happens later,
+asynchronously, via `pico_audio_i2s`'s own IRQ-driven DMA - completely
+decoupled from this function's caller. This is DESIGNED to be callable
+from anywhere, any number of times, without ever stalling the caller.
+
+Our replacement (`i_picosound.c`, using mp3player's `audio_pio` driver)
+does the opposite: `audio_out()` calls `pio_sm_put_blocking()` in a
+loop, a hard synchronous block that can take ~12ms per call
+(MIX_BUFFER_SAMPLES=512 at 44.1kHz) once real audio is playing (silence
+before that plays through fast, which is why nothing looked wrong until
+the first real sound). `audio_pio.c` (from `mp3player`, itself adapted
+from Waveshare's demo) was written for a single-core, sequential "push
+samples, block until accepted" music player - not for being called from
+inside a real-time game loop that also has to keep rendering and
+processing tics on a tight per-frame schedule from either core. A core
+stalling for ~12ms mid-frame is a very plausible way to break
+`pd_render.cpp`'s core0/core1 rendezvous handshake (the
+`render_frame_ready`/`display_frame_freed` semaphore handoff), which is
+presumably designed assuming calls with bounded, short latency
+throughout - explaining a freeze that's deterministic (same call
+pattern every time) without needing an actual data race (all of the
+mutex fixes made along the way were real, legitimate bugs, but not
+*this* one).
+
+**Not yet fixed**: properly fixing this means making our audio output
+path non-blocking too (real DMA/IRQ-driven double-buffering into the
+PIO FIFO, not a busy-wait `pio_sm_put_blocking` loop) - a real driver
+rewrite, not a quick patch. `DEBUG_NO_SOUND=1` remains the practical
+stopgap. If picked back up: `audio_pio.c`'s `audio_out()`/`data_treating()`
+are the functions to redesign; `mclk_pio_init()`/`dout_pio_init()` (PIO
+program setup) likely don't need to change, only how samples get handed
+to the PIO SM's FIFO.
+
 ## Open questions
-- The actual audio bug (see above) - narrowed to `i_picosound.c`, not
-  yet found. `DEBUG_NO_SOUND=1` is a working stopgap, not a fix.
+- Making the audio path non-blocking (see above) - the real fix,
+  not yet attempted. `DEBUG_NO_SOUND=1` is a working stopgap.
 - Touch/PWR input not being detected at all (see above) - next thing to
   debug.
 - What actually drives title-screen advancement in a `PD_COLUMNS` build,

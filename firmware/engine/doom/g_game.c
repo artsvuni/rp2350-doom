@@ -57,6 +57,9 @@
 #include "v_video.h"
 
 #include "w_wad.h"
+#if PICO_ON_DEVICE
+#include "bootlog.h"
+#endif
 
 #include "p_local.h" 
 
@@ -693,10 +696,13 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
 //
 // G_DoLoadLevel 
 //
-void G_DoLoadLevel (void) 
-{ 
-    int             i; 
+void G_DoLoadLevel (void)
+{
+    int             i;
 
+#if PICO_ON_DEVICE
+    bootlog_print("nl1: G_DoLoadLevel entered");
+#endif
     // Set the sky map.
     // First thing, we have a dummy sky texture name,
     //  a flat. The data is in the WAD only because
@@ -739,9 +745,12 @@ void G_DoLoadLevel (void)
     if (wipegamestate == GS_LEVEL)
 	wipegamestate = -1;             // force a wipe
 
-    gamestate = GS_LEVEL; 
+    gamestate = GS_LEVEL;
+#if PICO_ON_DEVICE
+    bootlog_print("nl2: gamestate=GS_LEVEL set");
+#endif
 
-    for (i=0 ; i<MAXPLAYERS ; i++) 
+    for (i=0 ; i<MAXPLAYERS ; i++)
     { 
 	turbodetected[i] = false;
 	if (playeringame[i] && players[i].playerstate == PST_DEAD) 
@@ -750,6 +759,9 @@ void G_DoLoadLevel (void)
     } 
 		 
     P_SetupLevel (gameepisode, gamemap, 0, gameskill);
+#if PICO_ON_DEVICE
+    bootlog_print("nl3: P_SetupLevel returned");
+#endif
     displayplayer = consoleplayer;		// view the guy you are playing
     gameaction = ga_nothing;
     Z_CheckHeap ();
@@ -1990,6 +2002,9 @@ G_DeferedInitNew
 
 void G_DoNewGame(boolean net)
 {
+#if PICO_ON_DEVICE
+    bootlog_print("ng1: G_DoNewGame entered");
+#endif
     demoplayback = false;
     netdemo = false;
     if (!net) {
@@ -2004,8 +2019,14 @@ void G_DoNewGame(boolean net)
     respawnparm = false;
     fastparm = false;
     nomonsters = false;
+#if PICO_ON_DEVICE
+    bootlog_print("ng2: before G_InitNew");
+#endif
     G_InitNew (d_skill, d_episode, d_map);
-    gameaction = ga_nothing; 
+#if PICO_ON_DEVICE
+    bootlog_print("ng6: G_InitNew returned");
+#endif
+    gameaction = ga_nothing;
 } 
 
 
@@ -2015,6 +2036,9 @@ G_InitNew
   int		episode,
   int		map )
 {
+#if PICO_ON_DEVICE
+    bootlog_print("ng3: G_InitNew entered");
+#endif
     texturename_t skytexturename;
     int             i;
 
@@ -2131,6 +2155,9 @@ G_InitNew
 
     viewactive = true;
 
+#if PICO_ON_DEVICE
+    bootlog_print("ng4: before sky texture lookup");
+#endif
     // Set the sky to use.
     //
     // Note: This IS broken, but it is how Vanilla Doom behaves.
@@ -2174,6 +2201,9 @@ G_InitNew
 
     skytexture = R_TextureNumForName(skytexturename);
 
+#if PICO_ON_DEVICE
+    bootlog_print("ng5: before G_DoLoadLevel");
+#endif
     G_DoLoadLevel ();
 }
 

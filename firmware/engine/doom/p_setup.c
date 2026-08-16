@@ -40,6 +40,9 @@
 #include "s_sound.h"
 
 #include "doomstat.h"
+#if PICO_ON_DEVICE
+#include "bootlog.h"
+#endif
 
 
 void	P_SpawnMapThing (spawnpoint_t spawnpoint);
@@ -719,14 +722,26 @@ void P_LoadBlockMap (int lump)
 
 #if !USE_ROWAD
     int lumplen = W_LumpLength(lump);
+#if PICO_ON_DEVICE
+    { char buf[24]; snprintf(buf, sizeof(buf), "bm1: lumplen=%d", lumplen); bootlog_print(buf); }
+#endif
     count = lumplen / 2;
     blockmaplump = Z_Malloc(lumplen, PU_LEVEL, 0);
+#if PICO_ON_DEVICE
+    bootlog_print("bm2: Z_Malloc OK");
+#endif
     W_ReadLump(lump, blockmaplump);
+#if PICO_ON_DEVICE
+    bootlog_print("bm3: W_ReadLump OK");
+#endif
 
     for (i=0; i<count; i++)
     {
 	blockmaplump[i] = SHORT(blockmaplump[i]);
     }
+#if PICO_ON_DEVICE
+    bootlog_print("bm4: swap loop OK");
+#endif
 #else
 #ifdef SYS_BIG_ENDIAN
 #error wrong format
@@ -768,6 +783,9 @@ void P_LoadBlockMap (int lump)
 
     blocklinks = Z_Malloc(count, PU_LEVEL, 0);
     memset(blocklinks, 0, count);
+#if PICO_ON_DEVICE
+    bootlog_print("bm5: P_LoadBlockMap done");
+#endif
 }
 
 
@@ -1022,6 +1040,9 @@ P_SetupLevel
     char	lumpname[9];
     int		lumpnum;
 
+#if PICO_ON_DEVICE
+    bootlog_print("pl1: P_SetupLevel entered");
+#endif
 #if PICO_DOOM_INFO
     printf("SETUP LEVEL E%dM%d\n", episode, map);
 #endif
@@ -1039,12 +1060,21 @@ P_SetupLevel
     players[consoleplayer].viewz = 1; 
 
     // Make sure all sounds are stopped before Z_FreeTags.
-    S_Start ();			
+    S_Start ();
+#if PICO_ON_DEVICE
+    bootlog_print("pl1b: S_Start OK");
+#endif
 
     Z_FreeTags (PU_LEVEL, PU_PURGELEVEL-1);
+#if PICO_ON_DEVICE
+    bootlog_print("pl1c: Z_FreeTags OK");
+#endif
 
     // UNUSED W_Profile ();
     P_InitThinkers ();
+#if PICO_ON_DEVICE
+    bootlog_print("pl1d: P_InitThinkers OK");
+#endif
 
 #if !NO_USE_RELOAD
     // if working with a devlopment map, reload it
@@ -1069,29 +1099,47 @@ P_SetupLevel
     }
 
     lumpnum = W_GetNumForName (lumpname);
-	
+
     maplumpinfo = lump_info(lumpnum);
 
     leveltime = 0;
 
+#if PICO_ON_DEVICE
+    bootlog_print("pl2: before P_LoadBlockMap");
+#endif
     // note: most of this ordering is important
     P_LoadBlockMap (lumpnum+ML_BLOCKMAP);
+#if PICO_ON_DEVICE
+    bootlog_print("pl3: BlockMap OK");
+#endif
     P_LoadVertexes (lumpnum+ML_VERTEXES);
     P_LoadSectors (lumpnum+ML_SECTORS);
     P_LoadSideDefs (lumpnum+ML_SIDEDEFS);
+#if PICO_ON_DEVICE
+    bootlog_print("pl4: Vtx/Sect/Side OK");
+#endif
 
     P_LoadLineDefs (lumpnum+ML_LINEDEFS);
     P_LoadSubsectors (lumpnum+ML_SSECTORS);
     P_LoadNodes (lumpnum+ML_NODES);
     P_LoadSegs (lumpnum+ML_SEGS);
+#if PICO_ON_DEVICE
+    bootlog_print("pl5: Line/Sub/Node/Seg OK");
+#endif
 
     P_GroupLines ();
     P_LoadReject (lumpnum+ML_REJECT);
+#if PICO_ON_DEVICE
+    bootlog_print("pl6: GroupLines/Reject OK");
+#endif
 
     bodyqueslot = 0;
     deathmatch_p = deathmatchstarts;
     P_LoadThings (lumpnum+ML_THINGS);
-    
+#if PICO_ON_DEVICE
+    bootlog_print("pl7: LoadThings OK");
+#endif
+
     // if deathmatch, randomly spawn the active players
     if (deathmatch)
     {
@@ -1109,13 +1157,19 @@ P_SetupLevel
 	
     // set up world state
     P_SpawnSpecials ();
-	
+#if PICO_ON_DEVICE
+    bootlog_print("pl8: SpawnSpecials OK");
+#endif
+
     // build subsector connect matrix
     //	UNUSED P_ConnectSubsectors ();
 
     // preload graphics
     if (precache)
 	R_PrecacheLevel ();
+#if PICO_ON_DEVICE
+    bootlog_print("pl9: P_SetupLevel done");
+#endif
 
     //printf ("free memory: 0x%x\n", Z_FreeMemory());
 
