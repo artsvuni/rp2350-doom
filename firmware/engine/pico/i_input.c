@@ -650,21 +650,36 @@ static void PollHardwareControls(void)
         ready = true;
     }
 
+    // The FT3168 can jitter between two adjacent zones while a finger is
+    // resting on their boundary.  Posting every sample change produces an
+    // alternating keyup/keydown burst (and used to redraw the bootlog for
+    // every transition).  Require a new non-zero zone to be observed on two
+    // consecutive tics before committing it.  A release is still immediate
+    // so Doom can never be left believing a movement key is held.
     static key_type_t held_zone_key = 0;
+    static key_type_t candidate_zone_key = 0;
+    static uint8_t candidate_zone_tics = 0;
     key_type_t zone_key = PollTouchZoneKey();
-    if (zone_key != held_zone_key) {
+
+    if (zone_key == held_zone_key) {
+        candidate_zone_key = 0;
+        candidate_zone_tics = 0;
+    } else if (zone_key == 0) {
         if (held_zone_key) PostKeyEvent(ev_keyup, held_zone_key);
-        if (zone_key) {
+        held_zone_key = 0;
+        candidate_zone_key = 0;
+        candidate_zone_tics = 0;
+    } else {
+        if (zone_key != candidate_zone_key) {
+            candidate_zone_key = zone_key;
+            candidate_zone_tics = 1;
+        } else if (++candidate_zone_tics >= 2) {
+            if (held_zone_key) PostKeyEvent(ev_keyup, held_zone_key);
             PostKeyEvent(ev_keydown, zone_key);
-            // TEMPORARY diagnostic: confirm the touch->event pipeline is
-            // firing at all, independent of whether the title screen (a
-            // PD_COLUMNS-specific draw path, not vanilla's D_PageDrawer -
-            // see DECISIONS.md) visually responds to it.
-            char buf[24];
-            snprintf(buf, sizeof(buf), "IN: touch key=0x%02x", zone_key);
-            bootlog_print(buf);
+            held_zone_key = zone_key;
+            candidate_zone_key = 0;
+            candidate_zone_tics = 0;
         }
-        held_zone_key = zone_key;
     }
 
     static key_type_t button1_pending_key = 0, button2_pending_key = 0;

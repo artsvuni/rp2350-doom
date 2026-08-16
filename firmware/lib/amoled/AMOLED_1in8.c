@@ -48,6 +48,7 @@ AMOLED_1IN8_ATTRIBUTES AMOLED_1IN8;
 // (or, in this calibration firmware, before any second caller) exists.
 static mutex_t dma_tx_mutex;
 static volatile bool dma_tx_mutex_ready = false;
+static bool address_axes_exchanged = false;
 
 /********************************************************************************
 function:	Sets the start position and size of the display area
@@ -176,6 +177,15 @@ void AMOLED_1IN8_SetBrightness(uint8_t brightness){
     QSPI_Deselect(qspi);
 }
 
+void AMOLED_1IN8_SetMemoryAccessControl(uint8_t madctl)
+{
+    QSPI_Select(qspi);
+    QSPI_REGISTER_Write(qspi, 0x36);
+    QSPI_DATA_Write(qspi, madctl);
+    QSPI_Deselect(qspi);
+    address_axes_exchanged = (madctl & 0x20) != 0;
+}
+
 
 /******************************************************************************
 function :	Clear screen
@@ -254,8 +264,10 @@ void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t 
     }
     mutex_enter_blocking(&dma_tx_mutex);
 
-    if(Yend > AMOLED_1IN8.HEIGHT) Yend = AMOLED_1IN8.HEIGHT;
-    if(Xend > AMOLED_1IN8.WIDTH) Xend = AMOLED_1IN8.WIDTH;
+    uint32_t logical_width = address_axes_exchanged ? AMOLED_1IN8.HEIGHT : AMOLED_1IN8.WIDTH;
+    uint32_t logical_height = address_axes_exchanged ? AMOLED_1IN8.WIDTH : AMOLED_1IN8.HEIGHT;
+    if(Yend > logical_height) Yend = logical_height;
+    if(Xend > logical_width) Xend = logical_width;
 
     AMOLED_1IN8_SetWindows(Xstart, Ystart, Xend, Yend);
     QSPI_Select(qspi);
@@ -272,6 +284,35 @@ void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t 
     while(dma_channel_is_busy(dma_tx));
     QSPI_Deselect(qspi);
 
+    mutex_exit(&dma_tx_mutex);
+}
+
+// Stream a window in chunks while keeping one command/CS transaction open.
+// This avoids a full-window RAM buffer without returning to the unreliable
+// per-row SetWindows pattern used by DisplayWindows().
+void AMOLED_1IN8_DisplayStreamBegin(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend)
+{
+    if (!dma_tx_mutex_ready) {
+        mutex_init(&dma_tx_mutex);
+        dma_tx_mutex_ready = true;
+    }
+    mutex_enter_blocking(&dma_tx_mutex);
+    AMOLED_1IN8_SetWindows(Xstart, Ystart, Xend, Yend);
+    QSPI_Select(qspi);
+    QSPI_Pixel_Write(qspi, 0x2c);
+}
+
+void AMOLED_1IN8_DisplayStreamWrite(const void *data, uint32_t byte_count)
+{
+    channel_config_set_dreq(&c, pio_get_dreq(qspi.pio, qspi.sm, true));
+    dma_channel_configure(dma_tx, &c, &qspi.pio->txf[qspi.sm], data,
+                          byte_count, true);
+    while (dma_channel_is_busy(dma_tx));
+}
+
+void AMOLED_1IN8_DisplayStreamEnd(void)
+{
+    QSPI_Deselect(qspi);
     mutex_exit(&dma_tx_mutex);
 }
 

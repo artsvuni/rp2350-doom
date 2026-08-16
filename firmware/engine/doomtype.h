@@ -197,7 +197,13 @@ typedef uint8_t floor_ceiling_clip_t;
 #if !PICO_RP2350
 #define SHORTPTR_BASE 0x20000000
 #else
-#define SHORTPTR_BASE 0x20030000
+// RP2350 SRAM ends at 0x20082000 and the linker's general-RAM stack limit
+// is 0x20080000. The short-pointer encoding spans exactly 256KB, so place
+// its window at 0x20040000..0x20080000. The static objects that are encoded
+// directly (players and thinkercap) link above 0x20040000; zone allocations
+// begin above them at __end__. The previous 0x20030000 base unnecessarily
+// left the final 64KB below the stack limit unavailable to the zone.
+#define SHORTPTR_BASE 0x20040000
 #endif
 typedef uint16_t shortptr_t;
 static inline void *shortptr_to_ptr(shortptr_t s) {
@@ -254,4 +260,3 @@ typedef void *shortptr_t;
 #endif
 
 #endif
-

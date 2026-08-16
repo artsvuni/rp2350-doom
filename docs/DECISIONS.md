@@ -683,6 +683,76 @@ them. Next session: find where `0xad`/`0xae` touch events are generated
 and queued, and check for an unbounded-growth or overwrite-without-check
 pattern under rapid repeated input.
 
+## 2026-08-16 (cont'd) — First fix candidate for gameplay touch-burst freeze
+
+Inspected the touch path after the gameplay freeze whose last visible
+messages alternated between `0xad` and `0xae`. The transition handler was
+calling `bootlog_print()` for every newly observed zone. That is not a cheap
+log operation: it redraws and synchronously transfers the bootlog framebuffer
+to the AMOLED. Touch-coordinate jitter at a zone boundary could therefore
+force a blocking panel transfer every tic while also posting a keyup and a
+keydown for every transition. The tiny Doom event queue has only eight slots
+and no full-queue check.
+
+Removed the per-transition bootlog redraw and added a two-consecutive-tic
+stability filter for switching into a non-zero touch zone. Finger release is
+still accepted immediately so a movement key cannot remain stuck. The
+firmware builds successfully. This is a **candidate**, not yet hardware-
+confirmed: flashing and sustained play on the physical board are required to
+tell whether it fixes the freeze or merely exposes the next failure.
+
+## 2026-08-16 (cont'd) — Combat freeze now points back to zone pressure
+
+The touch stability/filter build played substantially longer, so the earlier
+touch-event burst was a real problem. A later freeze happened when a barrel
+exploded, initially suggesting `P_RadiusAttack`; a second playthrough froze
+while shooting a second enemy in a different room, without a barrel. The
+shared trigger is now combat rather than the barrel: shots spawn temporary
+puff/blood thinkers, and deaths retain corpses and can spawn dropped items.
+Those objects use thinker pools whose new backing blocks come from the zone.
+
+The level only began fitting after shrinking the temporary bootlog from seven
+lines to three, so runtime headroom was already suspect. Shrunk it again from
+three lines to one, reclaiming 20,608 bytes of static RAM directly back into
+the zone address window. Reverted the untested barrel-specific breadcrumbs so
+this build changes only memory headroom (in addition to the preceding touch
+fix). Builds successfully; sustained combat on hardware is the next test.
+
+The existing `Z_Malloc` OOM bootlog message not appearing on the frozen image
+does not conclusively rule OOM out: an already-running full gameplay frame DMA
+can overwrite the small diagnostic strip after the OOM print and before the
+panic halt becomes visible.
+
+## 2026-08-16 (cont'd) — Scaled tiled video works; extend shortptr zone by 64KB
+
+Hardware test of the 448x280 aspect-preserving (7:5) scaled renderer showed
+the actual Doom image clean, centered, and much larger. The colorful noise in
+the photo was confined exactly to the two 44px letterbox bands: panel GRAM
+that the partial-window presenter never initialized, not corrupt gameplay
+pixels. Added a one-time clear of those bands using four packed transfers and
+the existing tile buffer, with no new allocation.
+
+The game also survived substantially more combat after replacing the original
+128KB full rotated framebuffer with a 35,840-byte 40-row transpose/scale tile,
+but eventually froze again, continuing to indicate marginal runtime zone
+capacity rather than a barrel-specific failure.
+
+Found a larger architectural RAM reserve: RP2350's `SHORTPTR_BASE` was
+`0x20030000`, limiting the 16-bit/word-addressed 256KB window to
+`0x20030000..0x20070000`, even though general SRAM is available to the linker
+stack limit at `0x20080000`. The only static addresses directly encoded as
+short pointers are `players` (`0x20044dd8`) and `thinkercap` (`0x20047308`),
+and zone allocation starts at `__end__` (`0x20048598`), all safely above
+`0x20040000`. Moved the window to `0x20040000..0x20080000`. This expands the
+actual zone from 162,408 to 227,944 bytes: exactly 65,536 additional bytes,
+without changing allocations, object lifetimes, or the display buffer.
+The upper bound equals (but does not cross) `__StackLimit=0x20080000`.
+
+Build succeeds. Hardware boot/play is required because an invalid direct
+short-pointer target would hit the deliberate `bkpt` range guard immediately;
+the linked-address audit covers the known direct static targets, while a real
+boot exercises initialization end-to-end.
+
 ## Open questions
 - **Freeze during actual gameplay after a rapid touch-event burst** (see
   immediately above) - not yet investigated. Suspect the touch-input

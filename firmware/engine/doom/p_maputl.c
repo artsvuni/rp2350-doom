@@ -1184,5 +1184,3 @@ P_PathTraverse
     return P_TraverseIntercepts ( trav, FRACUNIT );
 }
 
-
-

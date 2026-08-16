@@ -32,8 +32,8 @@
 // cleanly (rendering disabled, no panel_window, even with an 18-line
 // buffer). Past corruption-hunting now; shrinking back to 3 lines frees
 // ~41KB back to the zone. See DECISIONS.md.
-#define HISTORY_LINES 3
-#define BOOTLOG_HEIGHT (HISTORY_LINES * (12 + 2)) // = 98
+#define HISTORY_LINES 1
+#define BOOTLOG_HEIGHT (HISTORY_LINES * (12 + 2)) // = 14
 #define MSG_MAXLEN 40
 
 // Full panel width (matches the buffer's natural stride - no repacking

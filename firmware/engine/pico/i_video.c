@@ -560,8 +560,10 @@ static void new_frame_stuff(void) {
 // this reimplements that exact placement as a direct, byte-swapped store
 // so a scanline's worth of pixels can be scattered in one tight loop.
 
-#define DOOM_VIEW_X_OFFSET  ((AMOLED_1IN8_HEIGHT - SCREENWIDTH) / 2)   // logical X offset (448-320)/2
-#define DOOM_VIEW_Y_OFFSET  ((AMOLED_1IN8_WIDTH - SCREENHEIGHT) / 2)   // logical Y offset (368-200)/2
+#define DISPLAY_WIDTH       448
+#define DISPLAY_HEIGHT      280
+#define DOOM_VIEW_X_OFFSET  ((AMOLED_1IN8_HEIGHT - DISPLAY_WIDTH) / 2) // 0
+#define DOOM_VIEW_Y_OFFSET  ((AMOLED_1IN8_WIDTH - DISPLAY_HEIGHT) / 2) // 44
 
 // A full 368-wide physical strip (368x320, matching the Y-windowed DMA
 // transfer's other dimension) would be 235KB, but the rotated Doom image
@@ -595,16 +597,28 @@ static void new_frame_stuff(void) {
 // manually claims from __end__ - see DECISIONS.md) - back to presenting
 // real frames.
 #define PRESENT_FRAME_TO_AMOLED_DISABLED 0
+#define PANEL_CHUNK_ROWS 40
 #if !PRESENT_FRAME_TO_AMOLED_DISABLED
-static UWORD panel_window[SCREENHEIGHT * SCREENWIDTH];
-
-static inline void blit_row_rotated90(const uint16_t *row, int doom_y) {
-    uint32_t base = (uint32_t)(SCREENHEIGHT - doom_y - 1);
-    for (int x = 0; x < SCREENWIDTH; x++) {
-        panel_window[base + (uint32_t)x * SCREENHEIGHT] = __builtin_bswap16(row[x]);
-    }
-}
+static UWORD panel_chunk[PANEL_CHUNK_ROWS * DISPLAY_WIDTH];
 #endif
+
+static void clear_letterbox_bands(void)
+{
+#if !PRESENT_FRAME_TO_AMOLED_DISABLED
+    // Logical Y:[0,44) and [324,368) become physical X strips after the
+    // software ROTATE_90 mapping. Reuse the frame tile: 40+4 rows per band,
+    // four reliable packed transfers, and no extra framebuffer allocation.
+    memset(panel_chunk, 0, sizeof(panel_chunk));
+    AMOLED_1IN8_DisplayWindowPacked(0, 0, 40, DISPLAY_WIDTH, panel_chunk);
+    AMOLED_1IN8_DisplayWindowPacked(40, 0, 44, DISPLAY_WIDTH, panel_chunk);
+    AMOLED_1IN8_DisplayWindowPacked(AMOLED_1IN8_WIDTH - 44, 0,
+                                     AMOLED_1IN8_WIDTH - 4, DISPLAY_WIDTH,
+                                     panel_chunk);
+    AMOLED_1IN8_DisplayWindowPacked(AMOLED_1IN8_WIDTH - 4, 0,
+                                     AMOLED_1IN8_WIDTH, DISPLAY_WIDTH,
+                                     panel_chunk);
+#endif
+}
 
 static void present_frame_to_amoled(void) {
 #if !PRESENT_FRAME_TO_AMOLED_DISABLED
@@ -641,12 +655,34 @@ static void present_frame_to_amoled(void) {
                 }
             }
         }
-        blit_row_rotated90((const uint16_t *)row_buf, scanline);
-    }
+        uint16_t *pixels = (uint16_t *)row_buf;
 
-    AMOLED_1IN8_DisplayWindowPacked(DOOM_VIEW_Y_OFFSET, DOOM_VIEW_X_OFFSET,
-                                     DOOM_VIEW_Y_OFFSET + SCREENHEIGHT, DOOM_VIEW_X_OFFSET + SCREENWIDTH,
-                                     panel_window);
+        // Exact 7:5 nearest-neighbour scale: 320x200 -> 448x280. Each
+        // source row produces one or two output rows; compose overlays only
+        // once, then duplicate the completed RGB565 row as needed.
+        int output_first = scanline * 7 / 5;
+        int output_end = (scanline + 1) * 7 / 5;
+        for (int output_y = output_first; output_y < output_end; output_y++) {
+            int chunk_row = output_y % PANEL_CHUNK_ROWS;
+            for (int output_x = 0; output_x < DISPLAY_WIDTH; output_x++) {
+                int source_x = output_x * 5 / 7;
+                panel_chunk[output_x * PANEL_CHUNK_ROWS
+                            + (PANEL_CHUNK_ROWS - chunk_row - 1)] =
+                    __builtin_bswap16(pixels[source_x]);
+            }
+
+            if (chunk_row == PANEL_CHUNK_ROWS - 1) {
+                int first_row = output_y - chunk_row;
+                int physical_x = DOOM_VIEW_Y_OFFSET
+                               + DISPLAY_HEIGHT - first_row - PANEL_CHUNK_ROWS;
+                AMOLED_1IN8_DisplayWindowPacked(physical_x,
+                                                 DOOM_VIEW_X_OFFSET,
+                                                 physical_x + PANEL_CHUNK_ROWS,
+                                                 DOOM_VIEW_X_OFFSET + DISPLAY_WIDTH,
+                                                 panel_chunk);
+            }
+        }
+    }
 #endif
 }
 
@@ -709,9 +745,10 @@ void I_InitGraphics(void)
     QSPI_4Wrie_Mode(&qspi);
     AMOLED_1IN8_Init();
     AMOLED_1IN8_SetBrightness(100);
-#if !PRESENT_FRAME_TO_AMOLED_DISABLED
-    memset(panel_window, 0, sizeof(panel_window));
-#endif
+    // SH8601 MADCTL has no row/column exchange bit (unlike ST77xx); landscape
+    // rotation is performed in small software-transposed tiles above.
+    AMOLED_1IN8_SetMemoryAccessControl(0x00);
+    clear_letterbox_bands();
 
     stbar = resolve_vpatch_handle(VPATCH_STBAR);
     sem_init(&render_frame_ready, 0, 2);
