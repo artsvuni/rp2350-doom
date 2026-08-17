@@ -9,6 +9,9 @@
 
 #include "picodoom.h"
 #include "pico/sem.h"
+#if DOOM_ENABLE_PROFILING
+#include "pico/time.h"
+#endif
 #include "hardware/gpio.h"
 #include "pico/divider.h"
 #include "image_decoder.h"
@@ -2594,6 +2597,11 @@ static void uh_oh_discard_columns(int render_col_limit) {
     }
 }
 void pd_end_frame(int wipe_start) {
+#if DOOM_ENABLE_PROFILING
+    uint32_t profile_render_started_us = time_us_32();
+    uint32_t profile_display_wait_started_us;
+    uint32_t profile_display_wait_us;
+#endif
     DEBUG_PINS_SET(start_end, 2);
 #if !PICO_ON_DEVICE
 //    tex_count.record_print(textures.size());
@@ -2605,12 +2613,18 @@ void pd_end_frame(int wipe_start) {
     reclip_fuzz_columns();
 #if PICO_ON_DEVICE
 //    gpio_put(22, 1);
+#if DOOM_ENABLE_PROFILING
+    profile_display_wait_started_us = time_us_32();
+#endif
     while (!sem_available(&display_frame_freed)) {
         I_UpdateSound();
     }
 //    gpio_put(22, 0);
 #endif
     sem_acquire_blocking(&display_frame_freed);
+#if DOOM_ENABLE_PROFILING
+    profile_display_wait_us = time_us_32() - profile_display_wait_started_us;
+#endif
     bool showing_help = inhelpscreens;
     static boolean was_in_help;
     if (gamestate == GS_LEVEL) {
@@ -2959,6 +2973,10 @@ void pd_end_frame(int wipe_start) {
     printf("GS %d vt %d fi %d\n", gamestate, next_video_type, next_frame_index);
 #endif
     sem_release(&render_frame_ready);
+#if DOOM_ENABLE_PROFILING
+    I_ProfileRecordRender(time_us_32() - profile_render_started_us,
+                          profile_display_wait_us);
+#endif
     DEBUG_PINS_CLR(start_end, 2);
 }
 

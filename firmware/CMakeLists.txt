@@ -12,6 +12,71 @@ set(CMAKE_CXX_STANDARD 17)
 # Keep the implementation available for experiments without charging the
 # normal SFX-only build its code, static state, or continuous mixer cost.
 option(DOOM_ENABLE_MUSIC "Enable experimental MUSX music synthesis" OFF)
+option(DOOM_ENABLE_PROFILING "Capture a bounded reset-persistent performance report" OFF)
+option(DOOM_ASYNC_AMOLED "Overlap AMOLED DMA with presentation packing" OFF)
+option(DOOM_HYBRID_CONTROLS
+    "Use two-axis touch movement/turning and tap PWR fire" OFF)
+option(DOOM_ROLL_STRAFE
+    "Add experimental accelerometer roll strafing to hybrid controls" OFF)
+set(DOOM_PROFILE_CAPTURE_SECONDS "60" CACHE STRING
+    "Profiler capture duration in seconds")
+set(DOOM_DISPLAY_WIDTH "320" CACHE STRING
+    "Landscape Doom output width: 320, 384, 416, or 448")
+set_property(CACHE DOOM_DISPLAY_WIDTH PROPERTY STRINGS 320 384 416 448)
+set(DOOM_PANEL_CHUNK_ROWS "40" CACHE STRING
+    "Transpose tile height: AUTO, 8, 10, 20, or 40")
+set_property(CACHE DOOM_PANEL_CHUNK_ROWS PROPERTY STRINGS AUTO 8 10 20 40)
+
+if(DOOM_DISPLAY_WIDTH STREQUAL "320")
+    set(DOOM_DISPLAY_HEIGHT 200)
+elseif(DOOM_DISPLAY_WIDTH STREQUAL "384")
+    set(DOOM_DISPLAY_HEIGHT 240)
+elseif(DOOM_DISPLAY_WIDTH STREQUAL "416")
+    set(DOOM_DISPLAY_HEIGHT 260)
+elseif(DOOM_DISPLAY_WIDTH STREQUAL "448")
+    set(DOOM_DISPLAY_HEIGHT 280)
+else()
+    message(FATAL_ERROR
+        "DOOM_DISPLAY_WIDTH must be one of 320, 384, 416, or 448")
+endif()
+
+if(DOOM_PANEL_CHUNK_ROWS STREQUAL "AUTO")
+    math(EXPR DOOM_PANEL_CHUNK_REMAINDER "${DOOM_DISPLAY_HEIGHT} % 8")
+    if(DOOM_PANEL_CHUNK_REMAINDER EQUAL 0)
+        set(DOOM_PANEL_CHUNK_ROWS_RESOLVED 8)
+    else()
+        # 416x260 is the only current mode not divisible by eight.
+        set(DOOM_PANEL_CHUNK_ROWS_RESOLVED 10)
+    endif()
+elseif(DOOM_PANEL_CHUNK_ROWS MATCHES "^(8|10|20|40)$")
+    set(DOOM_PANEL_CHUNK_ROWS_RESOLVED ${DOOM_PANEL_CHUNK_ROWS})
+else()
+    message(FATAL_ERROR
+        "DOOM_PANEL_CHUNK_ROWS must be AUTO, 8, 10, 20, or 40")
+endif()
+
+math(EXPR DOOM_PANEL_CHUNK_REMAINDER
+    "${DOOM_DISPLAY_HEIGHT} % ${DOOM_PANEL_CHUNK_ROWS_RESOLVED}")
+if(NOT DOOM_PANEL_CHUNK_REMAINDER EQUAL 0)
+    message(FATAL_ERROR
+        "${DOOM_DISPLAY_HEIGHT} output rows must be divisible by "
+        "DOOM_PANEL_CHUNK_ROWS=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}")
+endif()
+
+if(DOOM_ASYNC_AMOLED AND NOT DOOM_PANEL_CHUNK_ROWS_RESOLVED EQUAL 20)
+    message(FATAL_ERROR
+        "DOOM_ASYNC_AMOLED requires DOOM_PANEL_CHUNK_ROWS=20 so two buffers "
+        "use the same SRAM as the proven single 40-row buffer")
+endif()
+
+if(NOT DOOM_PROFILE_CAPTURE_SECONDS MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "DOOM_PROFILE_CAPTURE_SECONDS must be a positive integer")
+endif()
+
+message(STATUS
+    "Doom AMOLED output: ${DOOM_DISPLAY_WIDTH}x${DOOM_DISPLAY_HEIGHT}; "
+    "tile=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}; async=${DOOM_ASYNC_AMOLED}; "
+    "profiling=${DOOM_ENABLE_PROFILING}")
 
 pico_sdk_init()
 
@@ -25,16 +90,22 @@ target_sources(doom_firmware PRIVATE
 add_subdirectory(lib/config)
 add_subdirectory(lib/pwr_button)
 add_subdirectory(lib/touch)
+add_subdirectory(lib/qmi8658)
 add_subdirectory(lib/qspi_pio)
 add_subdirectory(lib/amoled)
 add_subdirectory(lib/gui)
 add_subdirectory(lib/fonts)
 add_subdirectory(lib/display)
 
+if(DOOM_ENABLE_PROFILING)
+    target_compile_definitions(amoled PRIVATE AMOLED_ENABLE_PROFILING=1)
+endif()
+
 include_directories(./lib/config)
 include_directories(./lib/button)
 include_directories(./lib/pwr_button)
 include_directories(./lib/touch)
+include_directories(./lib/qmi8658)
 include_directories(./lib/qspi_pio)
 include_directories(./lib/amoled)
 include_directories(./lib/gui)
@@ -45,6 +116,7 @@ target_link_libraries(doom_firmware PRIVATE
     config
     pwr_button
     touch
+    qmi8658
     display
     pico_stdlib
     hardware_i2c
@@ -107,6 +179,7 @@ target_link_libraries(doom PRIVATE
     es8311
     touch
     pwr_button
+    qmi8658
     pico_stdlib
     pico_multicore
     hardware_i2c
@@ -118,6 +191,12 @@ target_link_libraries(doom PRIVATE
 )
 
 target_compile_definitions(doom PRIVATE
+    DOOM_DISPLAY_WIDTH=${DOOM_DISPLAY_WIDTH}
+    DOOM_DISPLAY_HEIGHT=${DOOM_DISPLAY_HEIGHT}
+    DOOM_PANEL_CHUNK_ROWS=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}
+    DOOM_ASYNC_AMOLED=$<BOOL:${DOOM_ASYNC_AMOLED}>
+    DOOM_HYBRID_CONTROLS=$<BOOL:${DOOM_HYBRID_CONTROLS}>
+    DOOM_ROLL_STRAFE=$<BOOL:${DOOM_ROLL_STRAFE}>
     PICODOOM_RENDER_NEWHOPE=1
     MERGE_DISTSCALE0_INTO_VIEWCOSSINANGLE=1
 
@@ -274,10 +353,27 @@ target_compile_definitions(doom PRIVATE
     # music, when enabled below, mixes through that same bounded queue.
 )
 
+# Only the video flight recorder consumes this value. Keep it source-local so
+# changing an iterative capture from 60 to 20 seconds does not rebuild the
+# entire embedded Doom engine.
+set_property(SOURCE engine/pico/i_video.c APPEND PROPERTY COMPILE_DEFINITIONS
+    DOOM_PROFILE_CAPTURE_SECONDS=${DOOM_PROFILE_CAPTURE_SECONDS})
+
 if(DOOM_ENABLE_MUSIC)
     target_compile_definitions(doom PRIVATE DOOM_ENABLE_MUSIC=1)
 else()
     target_compile_definitions(doom PRIVATE DEBUG_NO_MUSIC=1)
+endif()
+if(DOOM_ENABLE_PROFILING)
+    target_compile_definitions(doom PRIVATE
+        DOOM_ENABLE_PROFILING=1
+        # A connected but stalled terminal must not pause gameplay for the SDK's
+        # default 500ms USB stdout timeout. Profiling summaries are disposable.
+        PICO_STDIO_USB_STDOUT_TIMEOUT_US=2000
+        # macOS may enumerate and read CDC without asserting DTR. Treat a ready
+        # USB device as connected so the profiling stream is not silently lost.
+        PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=1
+    )
 endif()
 # Deliberately NOT set (unlike upstream's RP2040-cramped build):
 # PICO_TIME_DEFAULT_ALARM_POOL_DISABLED / _MAX_TIMERS, PICO_DISABLE_SHARED_IRQ_HANDLERS,

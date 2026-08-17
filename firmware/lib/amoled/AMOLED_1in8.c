@@ -26,6 +26,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 ******************************************************************************/
+#include <assert.h>
 #include "DEV_Config.h"
 #include "AMOLED_1in8.h"
 #include "pico/mutex.h"
@@ -49,13 +50,20 @@ AMOLED_1IN8_ATTRIBUTES AMOLED_1IN8;
 // (or, in this calibration firmware, before any second caller) exists.
 static mutex_t dma_tx_mutex;
 static volatile bool dma_tx_mutex_ready = false;
+static bool packed_transfer_active = false;
 static bool address_axes_exchanged = false;
+#if AMOLED_ENABLE_PROFILING
+static volatile uint32_t dma_timeout_count;
+#endif
 
 static bool wait_for_dma_or_recover(uint64_t timeout_us)
 {
     uint64_t started_us = time_us_64();
     while (dma_channel_is_busy(dma_tx)) {
         if (time_us_64() - started_us > timeout_us) {
+#if AMOLED_ENABLE_PROFILING
+            dma_timeout_count++;
+#endif
             dma_channel_abort(dma_tx);
             pio_sm_set_enabled(qspi.pio, qspi.sm, false);
             pio_sm_clear_fifos(qspi.pio, qspi.sm);
@@ -66,6 +74,15 @@ static bool wait_for_dma_or_recover(uint64_t timeout_us)
         tight_loop_contents();
     }
     return true;
+}
+
+uint32_t AMOLED_1IN8_GetDmaTimeoutCount(void)
+{
+#if AMOLED_ENABLE_PROFILING
+    return dma_timeout_count;
+#else
+    return 0;
+#endif
 }
 
 /********************************************************************************
@@ -279,13 +296,19 @@ void AMOLED_1IN8_Display(UWORD *Image)
 // Single-DMA-transfer window blit for a *tightly packed* Image buffer
 // (no full-panel stride) - see the header comment on why this exists
 // instead of just using AMOLED_1IN8_DisplayWindows().
-void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend, UWORD *Image)
+void AMOLED_1IN8_DisplayWindowPackedStart(uint32_t Xstart, uint32_t Ystart,
+                                          uint32_t Xend, uint32_t Yend,
+                                          const UWORD *Image)
 {
     if (!dma_tx_mutex_ready) {
         mutex_init(&dma_tx_mutex);
         dma_tx_mutex_ready = true;
     }
     mutex_enter_blocking(&dma_tx_mutex);
+
+    // Holding the mutex until Wait() prevents every other display caller from
+    // changing the shared DMA channel, PIO state machine, window, or CS.
+    assert(!packed_transfer_active);
 
     uint32_t logical_width = address_axes_exchanged ? AMOLED_1IN8.HEIGHT : AMOLED_1IN8.WIDTH;
     uint32_t logical_height = address_axes_exchanged ? AMOLED_1IN8.WIDTH : AMOLED_1IN8.HEIGHT;
@@ -300,16 +323,32 @@ void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t 
     dma_channel_configure(dma_tx,
                         &c,
                         &qspi.pio->txf[qspi.sm],
-                        (UBYTE *)Image,
+                        (const UBYTE *)Image,
                         (Xend - Xstart) * (Yend - Ystart) * 2,
                         true);
+    packed_transfer_active = true;
+}
 
-    // This is the runtime presentation path. Never let one lost PIO DREQ
-    // permanently strand core1 and therefore Doom's render rendezvous.
-    wait_for_dma_or_recover(20000);
+bool AMOLED_1IN8_DisplayWindowPackedWait(void)
+{
+    assert(packed_transfer_active);
+
+    // Never let one lost PIO DREQ permanently strand core1 and therefore
+    // Doom's render rendezvous.
+    bool completed = wait_for_dma_or_recover(20000);
     QSPI_Deselect(qspi);
 
+    packed_transfer_active = false;
     mutex_exit(&dma_tx_mutex);
+    return completed;
+}
+
+void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart,
+                                     uint32_t Xend, uint32_t Yend,
+                                     UWORD *Image)
+{
+    AMOLED_1IN8_DisplayWindowPackedStart(Xstart, Ystart, Xend, Yend, Image);
+    AMOLED_1IN8_DisplayWindowPackedWait();
 }
 
 // Stream a window in chunks while keeping one command/CS transaction open.

@@ -42,6 +42,7 @@
 #include <string.h>
 #include <limits.h>
 #include <doom/r_data.h>
+#include <doom/doomstat.h>
 #include "doom/f_wipe.h"
 #include "pico.h"
 
@@ -51,6 +52,7 @@
 #include "doomtype.h"
 #include "i_input.h"
 #include "i_joystick.h"
+#include "i_sound.h"
 #include "i_system.h"
 #include "i_timer.h"
 #include "i_video.h"
@@ -70,6 +72,13 @@
 #include "pico/sync.h"
 #include "pico/time.h"
 #include "hardware/gpio.h"
+#if DOOM_ENABLE_PROFILING
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+#include "hardware/watchdog.h"
+#include "hardware/structs/watchdog.h"
+#include "pico/platform/sections.h"
+#endif
 #include "picodoom.h"
 #include "image_decoder.h"
 
@@ -547,68 +556,346 @@ static void new_frame_stuff(void) {
 
 // --- AMOLED presentation -------------------------------------------------
 //
-// Doom renders at 320x200; our panel is 368x448, driven landscape-rotated
-// (see doom/firmware/lib/display) - so the game view is 448x368 logical
-// space with the 320x200 image centered, matching the layout already
-// worked out for the control-calibration firmware.
-//
-// GUI_Paint's ROTATE_90 case (Paint_SetPixel, Scale==65) maps logical
-// (Xpoint,Ypoint) to a physical pixel index of
-// physical_idx = (PANEL_WIDTH - Ypoint - 1) + Xpoint * PANEL_WIDTH,
-// stored big-endian (high byte first) in a PANEL_WIDTH-stride buffer. We
-// don't call Paint_SetPixel per pixel (64000 calls/frame is wasteful) -
-// this reimplements that exact placement as a direct, byte-swapped store
-// so a scanline's worth of pixels can be scattered in one tight loop.
+// Doom always renders one 320x200 indexed frame. This boundary composes the
+// palette and overlays once per source row, optionally scales it, transposes it
+// into portrait-addressed tiles, and sends tightly packed RGB565 over QSPI.
+// Keeping output size here means the renderer and its memory-heavy tables stay
+// unchanged while 320x200, 384x240, 416x260, and 448x280 can be compared.
 
-#define DISPLAY_WIDTH       SCREENWIDTH
-#define DISPLAY_HEIGHT      SCREENHEIGHT
-#define DOOM_VIEW_X_OFFSET  ((AMOLED_1IN8_HEIGHT - DISPLAY_WIDTH) / 2) // 64
-#define DOOM_VIEW_Y_OFFSET  ((AMOLED_1IN8_WIDTH - DISPLAY_HEIGHT) / 2) // 84
+#define DISPLAY_WIDTH       DOOM_DISPLAY_WIDTH
+#define DISPLAY_HEIGHT      DOOM_DISPLAY_HEIGHT
+#define DOOM_VIEW_X_OFFSET  ((AMOLED_1IN8_HEIGHT - DISPLAY_WIDTH) / 2)
+#define DOOM_VIEW_Y_OFFSET  ((AMOLED_1IN8_WIDTH - DISPLAY_HEIGHT) / 2)
 
-// A full 368-wide physical strip (368x320, matching the Y-windowed DMA
-// transfer's other dimension) would be 235KB, but the rotated Doom image
-// only ever occupies a SCREENHEIGHT(200)-wide sub-band of that 368 (the
-// rest is letterbox padding either side - DOOM_VIEW_Y_OFFSET on each edge).
-// Sized to exactly that used band instead (320*200*2 = 128000 bytes, zero
-// slack) - this is what actually fixed a RAM-budget regression from
-// restoring pd_render.cpp's real (non-stub) static state: see the
-// 2026-08-16 entry in doom/docs/DECISIONS.md for the __end__/SHORTPTR_BASE
-// arithmetic that made this necessary, not just nice-to-have.
-// "base" below is relative to this narrower buffer (no + DOOM_VIEW_Y_OFFSET)
-// - that offset now lives in present_frame_to_amoled()'s DisplayWindowPacked
-// Xstart/Xend instead. Presented via AMOLED_1IN8_DisplayWindowPacked()
-// (single DMA transfer) rather than AMOLED_1IN8_DisplayWindows(), which
-// proved intermittently unreliable on this hardware - see DECISIONS.md.
-// Static, not malloc'd: Z_Init's zone claims everything from the linker's
-// __end__ symbol up to a fixed address (SHORTPTR_BASE+0x40000, required by
-// this engine's "short pointer" scheme - see i_system.c's AutoAllocMemory),
-// leaving only a thin sliver of the C library heap above that for
-// malloc(). A static array is accounted for in bss *before* __end__ is
-// computed, so it doesn't compete with the zone for that sliver at all.
-//
-// NOTE: the letterbox padding area (outside this band, and outside
-// bootlog's own window) is never explicitly cleared by anything - it's
-// whatever was on the panel before. Cosmetic; fine for bring-up, revisit
-// once something is actually rendering.
-// Re-enabled (2026-08-16 cont'd): was temporarily disabled (panel_window's
-// 128000 bytes freed for a bigger bootlog history) while chasing the
-// zone-corruption bug. Root cause found and fixed (audio_pio.c's
-// data_treating() was calloc()'ing into the same address range the zone
-// manually claims from __end__ - see DECISIONS.md) - back to presenting
-// real frames.
-#define PRESENT_FRAME_TO_AMOLED_DISABLED 0
-#define PANEL_CHUNK_ROWS 40
-#if !PRESENT_FRAME_TO_AMOLED_DISABLED
-static UWORD panel_chunk[PANEL_CHUNK_ROWS * DISPLAY_WIDTH];
+static_assert(DISPLAY_WIDTH >= SCREENWIDTH, "AMOLED output cannot downscale");
+static_assert(DISPLAY_WIDTH <= AMOLED_1IN8_HEIGHT, "AMOLED output too wide");
+static_assert(DISPLAY_HEIGHT <= AMOLED_1IN8_WIDTH, "AMOLED output too tall");
+static_assert(DISPLAY_WIDTH * SCREENHEIGHT ==
+              DISPLAY_HEIGHT * SCREENWIDTH, "output must remain 16:10");
+
+// Forty rows is the hardware-proven default. Smaller experimental tiles can
+// shorten the strided writes and recover SRAM, but the first 8-row hardware
+// build produced a black panel. Keep tile height selectable for controlled
+// driver work without exposing that failed candidate as the default.
+#define PANEL_CHUNK_ROWS DOOM_PANEL_CHUNK_ROWS
+static_assert(PANEL_CHUNK_ROWS > 0, "transpose tile must contain rows");
+static_assert((DISPLAY_HEIGHT % PANEL_CHUNK_ROWS) == 0,
+              "output height must be divisible by transpose tile height");
+
+#if DOOM_ASYNC_AMOLED
+static_assert(PANEL_CHUNK_ROWS == 20,
+              "memory-neutral async presentation requires 20-row buffers");
+// Two 20-row buffers use exactly the same SRAM as the proven single 40-row
+// tile. While DMA reads one, core1 packs the next.
+static UWORD panel_chunks[2][PANEL_CHUNK_ROWS * DISPLAY_WIDTH];
+#else
+static UWORD panel_chunks[1][PANEL_CHUNK_ROWS * DISPLAY_WIDTH];
+#endif
+
+#if DOOM_ENABLE_PROFILING
+#define PROFILE_WARMUP_US (3u * 1000u * 1000u)
+#define PROFILE_CAPTURE_DURATION_US \
+    (DOOM_PROFILE_CAPTURE_SECONDS * 1000u * 1000u)
+#define PROFILE_REPORT_MAGIC 0x50455246u // "PERF"
+#define PROFILE_FLASH_OFFSET ((uint32_t)TINY_WAD_ADDR - XIP_BASE - FLASH_SECTOR_SIZE)
+
+static_assert((PROFILE_FLASH_OFFSET % FLASH_SECTOR_SIZE) == 0,
+              "profile log must start on a flash erase-sector boundary");
+static_assert(PROFILE_FLASH_OFFSET + FLASH_SECTOR_SIZE ==
+              (uint32_t)TINY_WAD_ADDR - XIP_BASE,
+              "profile log must occupy only the sector immediately before WHD");
+
+static volatile uint32_t profile_game_frame_last_us;
+static volatile uint32_t profile_game_frame_max_us;
+static volatile uint32_t profile_render_last_us;
+static volatile uint32_t profile_render_max_us;
+static volatile uint32_t profile_display_wait_last_us;
+static volatile uint32_t profile_display_wait_max_us;
+
+void I_ProfileRecordGameFrame(uint32_t frame_us)
+{
+    profile_game_frame_last_us = frame_us;
+    if (frame_us > profile_game_frame_max_us) profile_game_frame_max_us = frame_us;
+}
+
+void I_ProfileRecordRender(uint32_t render_us, uint32_t display_wait_us)
+{
+    profile_render_last_us = render_us;
+    profile_display_wait_last_us = display_wait_us;
+    if (render_us > profile_render_max_us) profile_render_max_us = render_us;
+    if (display_wait_us > profile_display_wait_max_us) {
+        profile_display_wait_max_us = display_wait_us;
+    }
+}
+
+typedef struct {
+    uint32_t samples;
+    uint32_t capture_started_us;
+    uint32_t cadence_samples;
+    uint32_t cadence_sum_us;
+    uint32_t cadence_max_us;
+    uint32_t core1_sum_us;
+    uint32_t core1_max_us;
+    uint32_t frame_wait_sum_us;
+    uint32_t frame_wait_max_us;
+    uint32_t present_sum_us;
+    uint32_t present_max_us;
+    uint32_t transfer_sum_us;
+    uint32_t transfer_max_us;
+    uint32_t previous_frame_start_us;
+} video_profile_t;
+
+static video_profile_t video_profile;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t width;
+    uint32_t height;
+    uint32_t samples;
+    uint32_t duration_us;
+    uint32_t cadence_avg_us;
+    uint32_t cadence_max_us;
+    uint32_t core1_avg_us;
+    uint32_t core1_max_us;
+    uint32_t frame_wait_avg_us;
+    uint32_t frame_wait_max_us;
+    uint32_t present_avg_us;
+    uint32_t present_max_us;
+    uint32_t prep_avg_us;
+    uint32_t transfer_avg_us;
+    uint32_t transfer_max_us;
+    uint32_t game_last_us;
+    uint32_t game_max_us;
+    uint32_t render_last_us;
+    uint32_t render_max_us;
+    uint32_t display_wait_last_us;
+    uint32_t display_wait_max_us;
+    uint32_t dma_timeout_count;
+    uint32_t checksum;
+} profile_report_t;
+
+// The linker deliberately does not clear this section at reset. The watchdog
+// scratch magic is the authority for whether its contents are a real report.
+static profile_report_t __uninitialized_ram(doom_profile_report);
+
+static uint32_t profile_report_checksum(const profile_report_t *report)
+{
+    const uint32_t *words = (const uint32_t *)report;
+    uint32_t checksum = 0x6d657472u;
+    for (size_t i = 0; i < (sizeof(*report) / sizeof(*words)) - 1; i++) {
+        checksum ^= words[i] + (uint32_t)(i * 0x9e3779b9u);
+    }
+    return checksum;
+}
+
+static void profile_persist_to_reserved_flash(void)
+{
+    // This is called only on the single-core report boot, before stdio, audio,
+    // or Doom starts. Gameplay itself never erases/programs flash. The page is
+    // in core0 SRAM so flash can be unavailable throughout the operation.
+    uint8_t page[FLASH_PAGE_SIZE] __attribute__((aligned(4)));
+    memset(page, 0xff, sizeof(page));
+    memcpy(page, &doom_profile_report, sizeof(doom_profile_report));
+
+    uint32_t interrupts = save_and_disable_interrupts();
+    flash_range_erase(PROFILE_FLASH_OFFSET, FLASH_SECTOR_SIZE);
+    flash_range_program(PROFILE_FLASH_OFFSET, page, sizeof(page));
+    restore_interrupts(interrupts);
+}
+
+static void profile_store_and_reboot(uint32_t samples, uint32_t duration_us)
+{
+    profile_report_t report = {
+        .magic = PROFILE_REPORT_MAGIC,
+        .version = 2,
+        .width = DISPLAY_WIDTH,
+        .height = DISPLAY_HEIGHT,
+        .samples = samples,
+        .duration_us = duration_us,
+        .cadence_avg_us = video_profile.cadence_sum_us /
+                          video_profile.cadence_samples,
+        .cadence_max_us = video_profile.cadence_max_us,
+        .core1_avg_us = video_profile.core1_sum_us / samples,
+        .core1_max_us = video_profile.core1_max_us,
+        .frame_wait_avg_us = video_profile.frame_wait_sum_us / samples,
+        .frame_wait_max_us = video_profile.frame_wait_max_us,
+        .present_avg_us = video_profile.present_sum_us / samples,
+        .present_max_us = video_profile.present_max_us,
+        .prep_avg_us = (video_profile.present_sum_us -
+                        video_profile.transfer_sum_us) / samples,
+        .transfer_avg_us = video_profile.transfer_sum_us / samples,
+        .transfer_max_us = video_profile.transfer_max_us,
+        .game_last_us = profile_game_frame_last_us,
+        .game_max_us = profile_game_frame_max_us,
+        .render_last_us = profile_render_last_us,
+        .render_max_us = profile_render_max_us,
+        .display_wait_last_us = profile_display_wait_last_us,
+        .display_wait_max_us = profile_display_wait_max_us,
+        .dma_timeout_count = AMOLED_1IN8_GetDmaTimeoutCount(),
+    };
+    report.checksum = profile_report_checksum(&report);
+    doom_profile_report = report;
+    watchdog_hw->scratch[0] = PROFILE_REPORT_MAGIC;
+    __dmb();
+    watchdog_reboot(0, 0, 10);
+    while (true) tight_loop_contents();
+}
+
+boolean I_ProfileBootReportPending(void)
+{
+    if (watchdog_hw->scratch[0] != PROFILE_REPORT_MAGIC) return false;
+    watchdog_hw->scratch[0] = 0;
+    boolean valid = doom_profile_report.magic == PROFILE_REPORT_MAGIC &&
+                    doom_profile_report.version == 2 &&
+                    doom_profile_report.checksum ==
+                        profile_report_checksum(&doom_profile_report);
+    if (valid) profile_persist_to_reserved_flash();
+    return valid;
+}
+
+void I_ProfilePrintBootReport(void)
+{
+    const profile_report_t *r = &doom_profile_report;
+    static unsigned screen_line;
+    char line[40];
+
+    printf("PERFLOG v=%lu mode=%lux%lu samples=%lu duration=%lu us\n",
+           (unsigned long)r->version, (unsigned long)r->width,
+           (unsigned long)r->height, (unsigned long)r->samples,
+           (unsigned long)r->duration_us);
+    printf("PERFLOG cadence avg=%lu max=%lu us\n",
+           (unsigned long)r->cadence_avg_us,
+           (unsigned long)r->cadence_max_us);
+    printf("PERFLOG core1 avg=%lu max=%lu wait avg=%lu max=%lu us\n",
+           (unsigned long)r->core1_avg_us, (unsigned long)r->core1_max_us,
+           (unsigned long)r->frame_wait_avg_us,
+           (unsigned long)r->frame_wait_max_us);
+    printf("PERFLOG present avg=%lu max=%lu prep=%lu us\n",
+           (unsigned long)r->present_avg_us,
+           (unsigned long)r->present_max_us,
+           (unsigned long)r->prep_avg_us);
+    printf("PERFLOG transfer avg=%lu max=%lu us\n",
+           (unsigned long)r->transfer_avg_us,
+           (unsigned long)r->transfer_max_us);
+    printf("PERFLOG game last=%lu max=%lu render last=%lu max=%lu us\n",
+           (unsigned long)r->game_last_us, (unsigned long)r->game_max_us,
+           (unsigned long)r->render_last_us,
+           (unsigned long)r->render_max_us);
+    printf("PERFLOG displaywait last=%lu max=%lu dma_to=%lu\n",
+           (unsigned long)r->display_wait_last_us,
+           (unsigned long)r->display_wait_max_us,
+           (unsigned long)r->dma_timeout_count);
+
+    switch (screen_line++ % 5u) {
+        case 0:
+            snprintf(line, sizeof(line), "PERF SAVED %lux%lu",
+                     (unsigned long)r->width, (unsigned long)r->height);
+            break;
+        case 1:
+            snprintf(line, sizeof(line), "cad %lu/%lu us",
+                     (unsigned long)r->cadence_avg_us,
+                     (unsigned long)r->cadence_max_us);
+            break;
+        case 2:
+            snprintf(line, sizeof(line), "present %lu/%lu us",
+                     (unsigned long)r->present_avg_us,
+                     (unsigned long)r->present_max_us);
+            break;
+        case 3:
+            snprintf(line, sizeof(line), "prep %lu xfer %lu us",
+                     (unsigned long)r->prep_avg_us,
+                     (unsigned long)r->transfer_avg_us);
+            break;
+        default:
+            snprintf(line, sizeof(line), "render %lu/%lu us",
+                     (unsigned long)r->render_last_us,
+                     (unsigned long)r->render_max_us);
+            break;
+    }
+    bootlog_print(line);
+}
+
+static inline void profile_accumulate(uint32_t value,
+                                      uint32_t *sum, uint32_t *maximum)
+{
+    *sum += value;
+    if (value > *maximum) *maximum = value;
+}
+
+static void profile_finish_frame(uint32_t frame_start_us,
+                                 uint32_t core1_us,
+                                 uint32_t frame_wait_us,
+                                 uint32_t present_us,
+                                 uint32_t transfer_us)
+{
+    static uint32_t level_started_us;
+
+    // Do not measure menus, attract-mode demos, or level loading. The capture
+    // starts automatically only when the player is controlling a real level.
+    if (gamestate != GS_LEVEL || !usergame || demoplayback) {
+        level_started_us = 0;
+        memset(&video_profile, 0, sizeof(video_profile));
+        profile_game_frame_last_us = 0;
+        profile_game_frame_max_us = 0;
+        profile_render_last_us = 0;
+        profile_render_max_us = 0;
+        profile_display_wait_last_us = 0;
+        profile_display_wait_max_us = 0;
+        return;
+    }
+
+    // Let level entry, first-frame asset work, and the player's initial grip
+    // settle before starting the timed minute. This keeps one-off load spikes
+    // from defining the maxima intended to represent real movement/combat.
+    if (!level_started_us) level_started_us = frame_start_us;
+    if (frame_start_us - level_started_us < PROFILE_WARMUP_US) {
+        memset(&video_profile, 0, sizeof(video_profile));
+        profile_game_frame_last_us = 0;
+        profile_game_frame_max_us = 0;
+        profile_render_last_us = 0;
+        profile_render_max_us = 0;
+        profile_display_wait_last_us = 0;
+        profile_display_wait_max_us = 0;
+        return;
+    }
+
+    if (!video_profile.capture_started_us) {
+        video_profile.capture_started_us = frame_start_us;
+    }
+
+    if (video_profile.previous_frame_start_us) {
+        profile_accumulate(frame_start_us - video_profile.previous_frame_start_us,
+                           &video_profile.cadence_sum_us,
+                           &video_profile.cadence_max_us);
+        video_profile.cadence_samples++;
+    }
+    video_profile.previous_frame_start_us = frame_start_us;
+    profile_accumulate(core1_us, &video_profile.core1_sum_us,
+                       &video_profile.core1_max_us);
+    profile_accumulate(frame_wait_us, &video_profile.frame_wait_sum_us,
+                       &video_profile.frame_wait_max_us);
+    profile_accumulate(present_us, &video_profile.present_sum_us,
+                       &video_profile.present_max_us);
+    profile_accumulate(transfer_us, &video_profile.transfer_sum_us,
+                       &video_profile.transfer_max_us);
+    video_profile.samples++;
+
+    uint32_t duration_us = frame_start_us - video_profile.capture_started_us;
+    if (duration_us < PROFILE_CAPTURE_DURATION_US) return;
+
+    const uint32_t samples = video_profile.samples;
+    profile_store_and_reboot(samples, duration_us);
+}
 #endif
 
 static void clear_panel_background(void)
 {
-#if !PRESENT_FRAME_TO_AMOLED_DISABLED
     // Clear all panel GRAM once so the larger previous build cannot remain
     // visible around the new 320x200 window. Reuse the runtime tile and split
     // the portrait panel into the widest full-height stripes that fit.
-    memset(panel_chunk, 0, sizeof(panel_chunk));
+    UWORD *panel_chunk = panel_chunks[0];
+    memset(panel_chunk, 0, sizeof(panel_chunks[0]));
     const int stripe_width = (PANEL_CHUNK_ROWS * DISPLAY_WIDTH) / AMOLED_1IN8_HEIGHT;
     for (int x = 0; x < AMOLED_1IN8_WIDTH; x += stripe_width) {
         int xend = x + stripe_width;
@@ -616,12 +903,93 @@ static void clear_panel_background(void)
         AMOLED_1IN8_DisplayWindowPacked(x, 0, xend, AMOLED_1IN8_HEIGHT,
                                          panel_chunk);
     }
+}
+
+static inline int flush_completed_chunk(int output_y, int pack_buffer
+#if DOOM_ASYNC_AMOLED
+                                        , bool *transfer_pending
+#endif
+#if DOOM_ENABLE_PROFILING
+                                         , uint32_t *transfer_us
+#endif
+)
+{
+    int chunk_row = output_y % PANEL_CHUNK_ROWS;
+    if (chunk_row != PANEL_CHUNK_ROWS - 1) return pack_buffer;
+
+    int first_row = output_y - chunk_row;
+    int physical_x = DOOM_VIEW_Y_OFFSET
+                   + DISPLAY_HEIGHT - first_row - PANEL_CHUNK_ROWS;
+#if DOOM_ENABLE_PROFILING
+    uint32_t started_us = time_us_32();
+#endif
+#if DOOM_ASYNC_AMOLED
+    if (*transfer_pending) {
+        AMOLED_1IN8_DisplayWindowPackedWait();
+        I_UpdateSound();
+    }
+    AMOLED_1IN8_DisplayWindowPackedStart(physical_x,
+                                          DOOM_VIEW_X_OFFSET,
+                                          physical_x + PANEL_CHUNK_ROWS,
+                                          DOOM_VIEW_X_OFFSET + DISPLAY_WIDTH,
+                                          panel_chunks[pack_buffer]);
+    *transfer_pending = true;
+#else
+    AMOLED_1IN8_DisplayWindowPacked(physical_x,
+                                     DOOM_VIEW_X_OFFSET,
+                                     physical_x + PANEL_CHUNK_ROWS,
+                                     DOOM_VIEW_X_OFFSET + DISPLAY_WIDTH,
+                                     panel_chunks[pack_buffer]);
+#if DOOM_ENABLE_PROFILING
+    *transfer_us += time_us_32() - started_us;
+#endif
+
+    // A 512-sample audio block lasts 11.6ms and the two-buffer queue covers
+    // 23.2ms. Full-width presentation takes about 29ms, so relying only on
+    // renderer/tic callbacks can underflow during simple menu frames and make
+    // SFX sound stretched. The packed transfer has completed and released its
+    // DMA mutex here; give the non-blocking mixer a refill opportunity between
+    // the seven proven 40-row transfers. I_UpdateSound() uses a try-lock and
+    // returns immediately when the queue is already full or no SFX is active.
+    I_UpdateSound();
+#endif
+
+#if DOOM_ENABLE_PROFILING && DOOM_ASYNC_AMOLED
+    // In the pipelined build this is deliberately host-blocking display time:
+    // residual wait plus command/submission work. DMA time hidden behind CPU
+    // packing is excluded, so preparation + transfer still explains cadence.
+    *transfer_us += time_us_32() - started_us;
+#endif
+
+#if DOOM_ASYNC_AMOLED
+    return pack_buffer ^ 1;
+#else
+    return pack_buffer;
 #endif
 }
 
+#if DOOM_ENABLE_PROFILING
+static uint32_t present_frame_to_amoled(uint32_t *transfer_us_out) {
+#else
 static void present_frame_to_amoled(void) {
-#if !PRESENT_FRAME_TO_AMOLED_DISABLED
+#endif
     uint32_t row_buf[SCREENWIDTH / 2]; // 2 pixels/word, matches scanline_func_*/draw_vpatch's dest convention
+#if DISPLAY_WIDTH != SCREENWIDTH
+    // Only scaled builds pay for this temporary row. It lives on core1's
+    // stack after pd_core1_loop() has returned, so it does not reduce Doom's
+    // short-pointer zone or overlap the renderer's deepest call paths.
+    uint16_t scaled_row[DISPLAY_WIDTH];
+    int output_y = 0;
+    int vertical_accumulator = SCREENHEIGHT - 1;
+#endif
+#if DOOM_ENABLE_PROFILING
+    uint32_t present_started_us = time_us_32();
+    uint32_t transfer_us = 0;
+#endif
+    int pack_buffer = 0;
+#if DOOM_ASYNC_AMOLED
+    bool transfer_pending = false;
+#endif
 
     for (int scanline = 0; scanline < SCREENHEIGHT; scanline++) {
         scanline_funcs[display_video_type](row_buf, scanline);
@@ -656,24 +1024,109 @@ static void present_frame_to_amoled(void) {
         }
         uint16_t *pixels = (uint16_t *)row_buf;
 
+#if DISPLAY_WIDTH == SCREENWIDTH
         int chunk_row = scanline % PANEL_CHUNK_ROWS;
         for (int x = 0; x < DISPLAY_WIDTH; x++) {
-            panel_chunk[x * PANEL_CHUNK_ROWS
-                        + (PANEL_CHUNK_ROWS - chunk_row - 1)] =
+            panel_chunks[pack_buffer][x * PANEL_CHUNK_ROWS
+                                      + (PANEL_CHUNK_ROWS - chunk_row - 1)] =
                 __builtin_bswap16(pixels[x]);
         }
-
-        if (chunk_row == PANEL_CHUNK_ROWS - 1) {
-            int first_row = scanline - chunk_row;
-            int physical_x = DOOM_VIEW_Y_OFFSET
-                           + DISPLAY_HEIGHT - first_row - PANEL_CHUNK_ROWS;
-            AMOLED_1IN8_DisplayWindowPacked(physical_x,
-                                             DOOM_VIEW_X_OFFSET,
-                                             physical_x + PANEL_CHUNK_ROWS,
-                                             DOOM_VIEW_X_OFFSET + DISPLAY_WIDTH,
-                                             panel_chunk);
+        pack_buffer = flush_completed_chunk(scanline, pack_buffer
+#if DOOM_ASYNC_AMOLED
+                                             , &transfer_pending
+#endif
+#if DOOM_ENABLE_PROFILING
+                                             , &transfer_us
+#endif
+        );
+#else
+        // Reverse-map the horizontal nearest-neighbour scale by emitting each
+        // source pixel once or twice. Initial SCREENWIDTH-1 bias exactly
+        // matches floor(output_x * SCREENWIDTH / DISPLAY_WIDTH), while loading
+        // and byte-swapping each source pixel only once.
+        int output_x = 0;
+        int horizontal_accumulator = SCREENWIDTH - 1;
+        for (int source_x = 0; source_x < SCREENWIDTH; source_x++) {
+            UWORD pixel = __builtin_bswap16(pixels[source_x]);
+            horizontal_accumulator += DISPLAY_WIDTH;
+            while (horizontal_accumulator >= SCREENWIDTH) {
+                scaled_row[output_x++] = pixel;
+                horizontal_accumulator -= SCREENWIDTH;
+            }
         }
+        assert(output_x == DISPLAY_WIDTH);
+
+        vertical_accumulator += DISPLAY_HEIGHT;
+        // At 448x280, 80 of the 200 source rows are emitted twice. Pack both
+        // adjacent output rows in one x loop whenever they stay in the same
+        // tile. This loads each scaled pixel once and removes one complete
+        // 448-iteration strided loop, without another row buffer or any image
+        // change. Fall back to the single-row path when the first copy closes
+        // the current tile.
+        if (vertical_accumulator >= SCREENHEIGHT * 2 &&
+            (output_y % PANEL_CHUNK_ROWS) != PANEL_CHUNK_ROWS - 1) {
+            int chunk_row = output_y % PANEL_CHUNK_ROWS;
+            UWORD *first = &panel_chunks[pack_buffer]
+                                         [PANEL_CHUNK_ROWS - chunk_row - 1];
+            UWORD *second = first - 1;
+            for (int x = 0; x < DISPLAY_WIDTH; x++) {
+                UWORD pixel = scaled_row[x];
+                *first = pixel;
+                *second = pixel;
+                first += PANEL_CHUNK_ROWS;
+                second += PANEL_CHUNK_ROWS;
+            }
+            output_y += 2;
+            vertical_accumulator -= SCREENHEIGHT * 2;
+            pack_buffer = flush_completed_chunk(output_y - 1, pack_buffer
+#if DOOM_ASYNC_AMOLED
+                                                 , &transfer_pending
+#endif
+#if DOOM_ENABLE_PROFILING
+                                                 , &transfer_us
+#endif
+            );
+            continue;
+        }
+        while (vertical_accumulator >= SCREENHEIGHT) {
+            int chunk_row = output_y % PANEL_CHUNK_ROWS;
+            for (int x = 0; x < DISPLAY_WIDTH; x++) {
+                panel_chunks[pack_buffer][x * PANEL_CHUNK_ROWS
+                                          + (PANEL_CHUNK_ROWS - chunk_row - 1)] =
+                    scaled_row[x];
+            }
+            pack_buffer = flush_completed_chunk(output_y, pack_buffer
+#if DOOM_ASYNC_AMOLED
+                                                 , &transfer_pending
+#endif
+#if DOOM_ENABLE_PROFILING
+                                                 , &transfer_us
+#endif
+            );
+            output_y++;
+            vertical_accumulator -= SCREENHEIGHT;
+        }
+#endif
     }
+#if DISPLAY_WIDTH != SCREENWIDTH
+    assert(output_y == DISPLAY_HEIGHT);
+#endif
+#if DOOM_ASYNC_AMOLED
+    if (transfer_pending) {
+#if DOOM_ENABLE_PROFILING
+        uint32_t started_us = time_us_32();
+#endif
+        AMOLED_1IN8_DisplayWindowPackedWait();
+#if DOOM_ENABLE_PROFILING
+        transfer_us += time_us_32() - started_us;
+#endif
+        I_UpdateSound();
+    }
+#endif
+#if DOOM_ENABLE_PROFILING
+    uint32_t present_us = time_us_32() - present_started_us;
+    *transfer_us_out = transfer_us;
+    return present_us;
 #endif
 }
 
@@ -686,40 +1139,25 @@ static void present_frame_to_amoled(void) {
 static void core1(void) {
     sem_release(&core1_launch);
     while (true) {
+#if DOOM_ENABLE_PROFILING
+        uint32_t frame_started_us = time_us_32();
+        uint32_t core1_started_us = frame_started_us;
+#endif
         pd_core1_loop();
-#if PICO_ON_DEVICE
-        // Bisecting core1's per-frame work (2026-08-16 cont'd): the zone
-        // list breaks during the first D_RunFrame() tic on core0 even
-        // though zero Z_Malloc calls happen in that window (confirmed:
-        // zm#1 is the only ever call, and it's clean, from P_Init long
-        // before the loop starts) - so something writes into zone
-        // memory directly, not through the allocator API. core1 runs
-        // concurrently every frame via this same loop; bracket its two
-        // halves once each to see which (if either) breaks it first.
-        // See DECISIONS.md.
-        {
-            static boolean printed;
-            if (!printed) {
-                printed = true;
-                char buf[40];
-                snprintf(buf, sizeof(buf), "c1a: after core1_loop free=%d", Z_FreeMemory());
-                bootlog_print(buf);
-            }
-        }
+#if DOOM_ENABLE_PROFILING
+        uint32_t core1_us = time_us_32() - core1_started_us;
+        uint32_t wait_started_us = time_us_32();
 #endif
         new_frame_stuff();
-#if PICO_ON_DEVICE
-        {
-            static boolean printed2;
-            if (!printed2) {
-                printed2 = true;
-                char buf[40];
-                snprintf(buf, sizeof(buf), "c1b: after frame_stuff free=%d", Z_FreeMemory());
-                bootlog_print(buf);
-            }
-        }
-#endif
+#if DOOM_ENABLE_PROFILING
+        uint32_t frame_wait_us = time_us_32() - wait_started_us;
+        uint32_t transfer_us;
+        uint32_t present_us = present_frame_to_amoled(&transfer_us);
+        profile_finish_frame(frame_started_us, core1_us, frame_wait_us,
+                             present_us, transfer_us);
+#else
         present_frame_to_amoled();
+#endif
     }
 }
 

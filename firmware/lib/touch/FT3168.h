@@ -98,7 +98,9 @@ void FT3168_Init(uint8_t mode);
 void FT3168_Reset();
 uint16_t FT3168_ReadID();
 uint16_t FT3168_ReadState(Value_Information info);
-void FT3168_Get_Point();
+// Reads finger count and first-touch X/Y from one coherent register burst.
+// Returns the reported finger count; coordinates are updated when non-zero.
+uint8_t FT3168_Get_Point(void);
 uint8_t FT3168_Get_Gesture();
 
 #endif // !_FT3168_H_

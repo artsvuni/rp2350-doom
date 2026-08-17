@@ -1,5 +1,6 @@
 # build artifacts
 build/
+firmware/build-*/
 *.uf2
 *.elf
 *.o

@@ -67,6 +67,17 @@ void I_CheckIsScreensaver(void);
 void I_SetGrabMouseCallback(grabmouse_callback_t func);
 
 void I_DisplayFPSDots(boolean dots_on);
+
+#if DOOM_ENABLE_PROFILING
+// Core0 timing samples consumed by the optional core1 USB profiler. All values
+// are aligned 32-bit snapshots; profiling never allocates or locks either core.
+void I_ProfileRecordGameFrame(uint32_t frame_us);
+void I_ProfileRecordRender(uint32_t render_us, uint32_t display_wait_us);
+// A profiling build captures a short real-level run, watchdog-reboots, and
+// then exposes the retained report without depending on live gameplay USB.
+boolean I_ProfileBootReportPending(void);
+void I_ProfilePrintBootReport(void);
+#endif
 void I_BindVideoVariables(void);
 
 void I_InitWindowTitle(void);

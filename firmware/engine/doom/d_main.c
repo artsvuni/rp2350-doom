@@ -28,6 +28,9 @@
 
 #if PICO_ON_DEVICE
 #include "bootlog.h"
+#if DOOM_ENABLE_PROFILING
+#include "pico/time.h"
+#endif
 #endif
 
 #include "config.h"
@@ -467,6 +470,9 @@ boolean D_GrabMouseCallback(void)
 //
 void D_RunFrame()
 {
+#if DOOM_ENABLE_PROFILING
+    uint32_t profile_frame_started_us = time_us_32();
+#endif
 #if !DOOM_TINY
     int nowtime;
     int tics;
@@ -568,6 +574,9 @@ void D_RunFrame()
         } while (wipestate);
 #endif
     }
+#if DOOM_ENABLE_PROFILING
+    I_ProfileRecordGameFrame(time_us_32() - profile_frame_started_us);
+#endif
 }
 
 //
@@ -2326,4 +2335,3 @@ void D_DoomMain (void)
 
     D_DoomLoop ();  // never returns
 }
-

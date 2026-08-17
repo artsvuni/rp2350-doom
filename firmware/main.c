@@ -63,10 +63,9 @@ static void touch_to_logical(uint16_t raw_x, uint16_t raw_y, int *logical_x, int
 // logical landscape coordinates, for print-debugging.
 static const char *poll_touch_zone(int *lx_out, int *ly_out)
 {
-    uint8_t fingers = (uint8_t)FT3168_ReadState(FT3168_FINGER_NUMBER);
+    uint8_t fingers = FT3168_Get_Point();
     if (fingers == 0) return NULL;
 
-    FT3168_Get_Point();
     int lx, ly;
     touch_to_logical(FT3168.x_point, FT3168.y_point, &lx, &ly);
     *lx_out = lx;
@@ -133,12 +132,12 @@ static int poll_pwr_button(void)
 
     pwr_button_event_t ev = pwr_button_poll();
 
-    if (ev == PWR_BUTTON_LONG_PRESS) {
+    if (ev & PWR_BUTTON_LONG_PRESS) {
         awaiting_double = false;
         return 3;
     }
 
-    if (ev == PWR_BUTTON_SHORT_PRESS) {
+    if (ev & PWR_BUTTON_SHORT_PRESS) {
         if (awaiting_double &&
             absolute_time_diff_us(last_short_press, get_absolute_time()) < DOUBLE_PRESS_WINDOW_US) {
             awaiting_double = false;
@@ -169,6 +168,7 @@ static const char *result_label(int result)
 
 int main()
 {
+    stdio_init_all();
     DEV_Module_Init();
     display_init();
     FT3168_Init(FT3168_Point_Mode);

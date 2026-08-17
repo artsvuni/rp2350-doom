@@ -58,9 +58,19 @@ void AMOLED_1IN8_DisplayWindows(uint32_t Xstart, uint32_t Ystart, uint32_t Xend,
 // smaller, more reliable alternative for a sub-window blit when you don't
 // have (or want) a full-panel-sized buffer. See doom/docs/DECISIONS.md.
 void AMOLED_1IN8_DisplayWindowPacked(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend, UWORD *Image);
+// Start one packed transfer and return while DMA feeds the panel. The caller
+// must keep Image unchanged and call DisplayWindowPackedWait() before starting
+// another transfer. The pair holds the display mutex and CS transaction across
+// the asynchronous interval, so existing synchronous/bootlog callers remain
+// serialized safely.
+void AMOLED_1IN8_DisplayWindowPackedStart(uint32_t Xstart, uint32_t Ystart,
+                                          uint32_t Xend, uint32_t Yend,
+                                          const UWORD *Image);
+bool AMOLED_1IN8_DisplayWindowPackedWait(void);
 void AMOLED_1IN8_DisplayStreamBegin(uint32_t Xstart, uint32_t Ystart, uint32_t Xend, uint32_t Yend);
 void AMOLED_1IN8_DisplayStreamWrite(const void *data, uint32_t byte_count);
 void AMOLED_1IN8_DisplayStreamEnd(void);
+uint32_t AMOLED_1IN8_GetDmaTimeoutCount(void);
 void AMOLED_1IN8_Clear(UWORD Color);
 
 #endif // !_AMOLED_1IN8_H_

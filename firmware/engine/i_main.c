@@ -40,6 +40,7 @@
 #include "piconet.h"
 #endif
 #include "doomtype.h"
+#include "i_video.h"
 #include "i_system.h"
 #include "m_argv.h"
 #if PICO_RP2350
@@ -127,6 +128,12 @@ int main(int argc, char **argv)
         bootlog_print(oom_report);
         while (true) tight_loop_contents();
     }
+#if DOOM_ENABLE_PROFILING
+    // Consume and persist a completed report before USB, core1, audio, or the
+    // game starts. This is the only safe single-core point for the reserved
+    // flash-sector write used by the host-side report reader.
+    boolean profile_report_pending = I_ProfileBootReportPending();
+#endif
     // NOT skipping ahead right now: first real hardware run of pd_render.cpp
     // (previously always stubbed out) produced a distorted/noisy screen
     // instead of a clean hang - need to see exactly which checkpoint was
@@ -138,6 +145,17 @@ int main(int argc, char **argv)
 #endif
 #if PICO_ON_DEVICE
     bootlog_print("2: stdio_init_all OK");
+#endif
+#if PICO_ON_DEVICE && DOOM_ENABLE_PROFILING
+    // A completed short capture survives its watchdog reset in uninitialised
+    // SRAM. Stop here, with graphics/core1/audio not yet started, so USB is
+    // quiet and the host can collect the report whenever it is ready.
+    if (profile_report_pending) {
+        while (true) {
+            I_ProfilePrintBootReport();
+            sleep_ms(1000);
+        }
+    }
 #endif
 #if PICO_BUILD
     I_Init();

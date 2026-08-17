@@ -81,7 +81,13 @@ void FT3168_Init(uint8_t mode) {
     FT3168_Reset();
 
     // FT3168 Init
-    FT3168_I2C_Write_Byte(REG_POWER_MODE,0X01);
+    // Point tracking needs continuous coordinate reports. Monitor mode (0x01)
+    // only detects a valid touch before waking into active tracking, which can
+    // hide the small initial motion required by game controls.
+    FT3168_I2C_Write_Byte(REG_POWER_MODE,
+                          mode == FT3168_Point_Mode
+                              ? FT3168_POWER_ACTIVE
+                              : FT3168_POWER_MONITOR);
     if(mode != FT3168_Point_Mode){
         FT3168_I2C_Write_Byte(FT3168_RD_WR_DEVICE_GESTUREID_MODE,0X01);
         FT3168.mode = FT3168_Gesture_Mode;
@@ -142,13 +148,19 @@ uint16_t FT3168_ReadState(Value_Information info) {
 function :	Get the coordinate value of FT3168 contact
 parameter:
 ******************************************************************************/
-void FT3168_Get_Point() {
-    uint8_t fingers = (uint8_t)FT3168_ReadState(FT3168_FINGER_NUMBER);
-    if(fingers != 0) 
-    {
-        FT3168.x_point = (int)FT3168_ReadState(FT3168_COORDINATE_X);
-        FT3168.y_point = (int)FT3168_ReadState(FT3168_COORDINATE_Y);
+uint8_t FT3168_Get_Point(void) {
+    // 0x02..0x06 are finger count, X high/low, and Y high/low. Reading them in
+    // one transaction prevents finger state and axes coming from different
+    // controller scan frames.
+    uint8_t point[5] = {0};
+    FT3168_I2C_Read_nByte(REG_FINGER_NUM, point, sizeof(point));
+
+    uint8_t fingers = point[0] & 0x0f;
+    if (fingers != 0) {
+        FT3168.x_point = ((uint16_t)(point[1] & 0x0f) << 8) | point[2];
+        FT3168.y_point = ((uint16_t)(point[3] & 0x0f) << 8) | point[4];
     }
+    return fingers;
 }
 
 /******************************************************************************

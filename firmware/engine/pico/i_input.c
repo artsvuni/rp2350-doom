@@ -25,6 +25,7 @@
 #include "pico.h"
 #include "doomkeys.h"
 #include "doomtype.h"
+#include "doomstat.h"
 #include "d_event.h"
 #include "i_input.h"
 #include "i_system.h"
@@ -37,6 +38,7 @@
 #include "pwr_button.h"
 #include "DEV_Config.h"
 #include "FT3168.h"
+#include "qmi8658.h"
 #include "AMOLED_1in8.h"
 #include "bootlog.h"
 #include <stdlib.h>
@@ -564,10 +566,9 @@ static void TouchToLogical(uint16_t raw_x, uint16_t raw_y, int *logical_x, int *
 // Returns the held zone's key, or 0 if no zone (or no finger) is down.
 static key_type_t PollTouchZoneKey(void)
 {
-    uint8_t fingers = (uint8_t)FT3168_ReadState(FT3168_FINGER_NUMBER);
+    uint8_t fingers = FT3168_Get_Point();
     if (fingers == 0) return 0;
 
-    FT3168_Get_Point();
     int lx, ly;
     TouchToLogical(FT3168.x_point, FT3168.y_point, &lx, &ly);
 
@@ -590,14 +591,13 @@ static key_type_t PollTouchSwipeHoldKey(void)
     static int anchor_x, anchor_y;
     static key_type_t chosen_key = 0;
 
-    uint8_t fingers = (uint8_t)FT3168_ReadState(FT3168_FINGER_NUMBER);
+    uint8_t fingers = FT3168_Get_Point();
     if (fingers == 0) {
         gesture_active = false;
         chosen_key = 0;
         return 0;
     }
 
-    FT3168_Get_Point();
     int lx, ly;
     TouchToLogical(FT3168.x_point, FT3168.y_point, &lx, &ly);
 
@@ -646,25 +646,380 @@ static key_type_t PollTouchMovementKey(void)
 #endif
 }
 
+#if DOOM_HYBRID_CONTROLS
+// Touch-first model: a two-axis drag owns vertical movement and horizontal
+// turning. Static state only; values are sampled once per Doom tic and applied
+// at the ticcmd boundary by I_ApplyHardwareTiccmd().
+#define HYBRID_TURN_DEAD_ZONE_PX 1
+#define HYBRID_TURN_FULL_SCALE_PX 112
+#define HYBRID_TURN_MIN 48
+#define HYBRID_TURN_MAX 960
+#define HYBRID_MOVE_DEAD_ZONE_PX 1
+#define HYBRID_MOVE_FULL_SCALE_PX 140
+#define HYBRID_MOVE_MIN 4
+#define HYBRID_MOVE_MAX 50
+#define HYBRID_TAP_MOVE_PX 12
+#define HYBRID_TAP_MAX_US (260 * 1000)
+#define HYBRID_DOUBLE_TAP_US (340 * 1000)
+#define HYBRID_DOUBLE_TAP_DISTANCE_PX 52
+#define HYBRID_STRAFE_CORNER_WIDTH_PX 96
+#define HYBRID_STRAFE_CORNER_HEIGHT_PX 72
+#define HYBRID_TOUCH_STRAFE_SPEED 32
+#define HYBRID_TOUCH_STRAFE_TICS 6
+static int16_t hybrid_turn;
+static int16_t hybrid_forward;
+static int16_t hybrid_touch_strafe;
+static uint8_t hybrid_touch_strafe_tics;
+
+typedef enum {
+    HYBRID_TOUCH_ACTION_NONE,
+    HYBRID_TOUCH_ACTION_USE,
+    HYBRID_TOUCH_ACTION_STRAFE_LEFT,
+    HYBRID_TOUCH_ACTION_STRAFE_RIGHT,
+} hybrid_touch_action_t;
+
+#if DOOM_ROLL_STRAFE
+#define MOTION_CALIBRATION_SAMPLES 18
+#define MOTION_CALIBRATION_STABLE_RAW 320
+#define MOTION_CALIBRATION_SPAN_RAW 640
+#define MOTION_STRAFE_START_TAN_Q10 181  // tan(10 degrees) * 1024
+#define MOTION_STRAFE_STOP_TAN_Q10 90    // tan(5 degrees) * 1024
+#define MOTION_STRAFE_FULL_TAN_Q10 414   // tan(22 degrees) * 1024
+#define MOTION_STRAFE_CONFIRM_TICS 2
+#define MOTION_STRAFE_MIN 8
+#define MOTION_STRAFE_MAX 32
+
+#ifndef DOOM_MOTION_ROLL_SIGN
+#define DOOM_MOTION_ROLL_SIGN 1
+#endif
+
+static int16_t hybrid_motion_strafe;
+static bool hybrid_touch_down;
+static bool hybrid_imu_available;
+#endif
+
+static int16_t ScaleTouchTurn(int dx)
+{
+    int magnitude = abs(dx);
+    if (magnitude <= HYBRID_TURN_DEAD_ZONE_PX) return 0;
+
+    magnitude -= HYBRID_TURN_DEAD_ZONE_PX;
+    int range = HYBRID_TURN_FULL_SCALE_PX - HYBRID_TURN_DEAD_ZONE_PX;
+    if (magnitude > range) magnitude = range;
+
+    // Keep small pointing-finger motions precise, then accelerate toward a
+    // fast turn at the outer edge of the bottom-left control quadrant.
+    int scaled = HYBRID_TURN_MIN
+        + (HYBRID_TURN_MAX - HYBRID_TURN_MIN)
+          * magnitude * magnitude / (range * range);
+    return dx > 0 ? (int16_t)-scaled : (int16_t)scaled;
+}
+
+static int16_t ScaleTouchMove(int dy)
+{
+    int magnitude = abs(dy);
+    if (magnitude <= HYBRID_MOVE_DEAD_ZONE_PX) return 0;
+
+    magnitude -= HYBRID_MOVE_DEAD_ZONE_PX;
+    int range = HYBRID_MOVE_FULL_SCALE_PX - HYBRID_MOVE_DEAD_ZONE_PX;
+    if (magnitude > range) magnitude = range;
+
+    // Keep the middle of the gesture near normal walking speed and reserve
+    // Doom's run speed for a deliberate reach toward the far side of the
+    // screen. The quadratic curve preserves immediate low-speed response.
+    int scaled = HYBRID_MOVE_MIN
+        + (HYBRID_MOVE_MAX - HYBRID_MOVE_MIN)
+          * magnitude * magnitude / (range * range);
+    return dy < 0 ? (int16_t)scaled : (int16_t)-scaled;
+}
+
+static hybrid_touch_action_t ClassifyHybridDoubleTap(int x, int y)
+{
+    if (y < AMOLED_1IN8_WIDTH - HYBRID_STRAFE_CORNER_HEIGHT_PX) {
+        return HYBRID_TOUCH_ACTION_USE;
+    }
+    if (x < HYBRID_STRAFE_CORNER_WIDTH_PX) {
+        return HYBRID_TOUCH_ACTION_STRAFE_LEFT;
+    }
+    if (x >= AMOLED_1IN8_HEIGHT - HYBRID_STRAFE_CORNER_WIDTH_PX) {
+        return HYBRID_TOUCH_ACTION_STRAFE_RIGHT;
+    }
+    return HYBRID_TOUCH_ACTION_USE;
+}
+
+// Returns one action exactly once when a clean double tap completes. Bottom
+// corners own bounded strafe bursts; the rest of the screen remains Use/Open.
+static hybrid_touch_action_t PollHybridTouch(bool active)
+{
+    static bool was_down;
+    static int anchor_x, anchor_y;
+    static int max_motion;
+    static uint32_t down_time_us;
+    static bool first_tap_valid;
+    static uint32_t first_tap_time_us;
+    static int first_tap_x, first_tap_y;
+    static hybrid_touch_action_t first_tap_action;
+
+    if (!active) {
+        was_down = false;
+        first_tap_valid = false;
+        hybrid_turn = 0;
+        hybrid_forward = 0;
+#if DOOM_ROLL_STRAFE
+        hybrid_touch_down = false;
+#endif
+        hybrid_touch_strafe = 0;
+        hybrid_touch_strafe_tics = 0;
+        return HYBRID_TOUCH_ACTION_NONE;
+    }
+
+    uint8_t fingers = FT3168_Get_Point();
+    uint32_t now = time_us_32();
+    if (fingers != 0) {
+#if DOOM_ROLL_STRAFE
+        hybrid_touch_down = true;
+#endif
+        int lx, ly;
+        TouchToLogical(FT3168.x_point, FT3168.y_point, &lx, &ly);
+
+        if (!was_down) {
+            was_down = true;
+            anchor_x = lx;
+            anchor_y = ly;
+            max_motion = 0;
+            down_time_us = now;
+            hybrid_turn = 0;
+            hybrid_forward = 0;
+            return HYBRID_TOUCH_ACTION_NONE;
+        }
+
+        int dx = lx - anchor_x;
+        int dy = ly - anchor_y;
+        int motion = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+        if (motion > max_motion) max_motion = motion;
+        hybrid_turn = ScaleTouchTurn(dx);
+        hybrid_forward = ScaleTouchMove(dy);
+        return HYBRID_TOUCH_ACTION_NONE;
+    }
+
+    hybrid_turn = 0;
+    hybrid_forward = 0;
+#if DOOM_ROLL_STRAFE
+    hybrid_touch_down = false;
+#endif
+    if (!was_down) return HYBRID_TOUCH_ACTION_NONE;
+    was_down = false;
+
+    bool tap = max_motion <= HYBRID_TAP_MOVE_PX
+        && (uint32_t)(now - down_time_us) <= HYBRID_TAP_MAX_US;
+    if (!tap) {
+        first_tap_valid = false;
+        return HYBRID_TOUCH_ACTION_NONE;
+    }
+
+    hybrid_touch_action_t action = ClassifyHybridDoubleTap(anchor_x, anchor_y);
+
+    if (first_tap_valid
+        && (uint32_t)(now - first_tap_time_us) <= HYBRID_DOUBLE_TAP_US
+        && abs(anchor_x - first_tap_x) <= HYBRID_DOUBLE_TAP_DISTANCE_PX
+        && abs(anchor_y - first_tap_y) <= HYBRID_DOUBLE_TAP_DISTANCE_PX
+        && action == first_tap_action) {
+        first_tap_valid = false;
+        return action;
+    }
+
+    first_tap_valid = true;
+    first_tap_time_us = now;
+    first_tap_x = anchor_x;
+    first_tap_y = anchor_y;
+    first_tap_action = action;
+    return HYBRID_TOUCH_ACTION_NONE;
+}
+
+#if DOOM_ROLL_STRAFE
+static int MaxAbsAxisDelta(const qmi8658_accel_raw_t *a,
+                           const qmi8658_accel_raw_t *b)
+{
+    int dx = abs((int)a->x - b->x);
+    int dy = abs((int)a->y - b->y);
+    int dz = abs((int)a->z - b->z);
+    int maximum = dx > dy ? dx : dy;
+    return maximum > dz ? maximum : dz;
+}
+
+static void PollHybridMotion(bool active, bool touch_down)
+{
+    static bool was_active;
+    static bool reference_valid;
+    static uint8_t calibration_samples;
+    static int32_t calibration_sum_y;
+    static int32_t calibration_sum_z;
+    static int16_t reference_y;
+    static int16_t reference_z;
+    static qmi8658_accel_raw_t calibration_previous;
+    static qmi8658_accel_raw_t calibration_origin;
+    static int8_t strafe_state;
+    static int8_t strafe_candidate;
+    static uint8_t strafe_candidate_tics;
+    qmi8658_accel_raw_t raw;
+
+    if (!active || !hybrid_imu_available) {
+        hybrid_motion_strafe = 0;
+        was_active = false;
+        reference_valid = false;
+        calibration_samples = 0;
+        strafe_state = 0;
+        return;
+    }
+
+    if (!was_active) {
+        was_active = true;
+        calibration_samples = 0;
+        calibration_sum_y = 0;
+        calibration_sum_z = 0;
+        reference_valid = false;
+        strafe_state = 0;
+        strafe_candidate = 0;
+        strafe_candidate_tics = 0;
+        hybrid_motion_strafe = 0;
+    }
+
+    if (!qmi8658_read_accel(&raw)) {
+        hybrid_motion_strafe = 0;
+        was_active = false;
+        return;
+    }
+
+    if (!touch_down) {
+        // A released touchscreen always disables strafe. Use that safe period
+        // to learn the current comfortable grip, but only after a genuinely
+        // settled half-second. The last completed neutral remains available if
+        // the next touch begins before another window completes.
+        hybrid_motion_strafe = 0;
+        strafe_state = 0;
+        strafe_candidate = 0;
+        strafe_candidate_tics = 0;
+
+        if (calibration_samples == 0) {
+            calibration_origin = raw;
+        } else if (MaxAbsAxisDelta(&raw, &calibration_previous)
+                       > MOTION_CALIBRATION_STABLE_RAW
+                   || MaxAbsAxisDelta(&raw, &calibration_origin)
+                          > MOTION_CALIBRATION_SPAN_RAW) {
+            calibration_samples = 0;
+            calibration_sum_y = 0;
+            calibration_sum_z = 0;
+            calibration_origin = raw;
+        }
+
+        calibration_sum_y += raw.y;
+        calibration_sum_z += raw.z;
+        calibration_previous = raw;
+        calibration_samples++;
+        if (calibration_samples == MOTION_CALIBRATION_SAMPLES) {
+            reference_y = (int16_t)(calibration_sum_y / MOTION_CALIBRATION_SAMPLES);
+            reference_z = (int16_t)(calibration_sum_z / MOTION_CALIBRATION_SAMPLES);
+            reference_valid = true;
+            calibration_samples = 0;
+            calibration_sum_y = 0;
+            calibration_sum_z = 0;
+        }
+        return;
+    }
+
+    // Never continue a partial neutral-calibration window through active play.
+    calibration_samples = 0;
+    calibration_sum_y = 0;
+    calibration_sum_z = 0;
+    if (!reference_valid) {
+        hybrid_motion_strafe = 0;
+        return;
+    }
+
+    // Compare the signed Y/Z cross product with the dot product. This measures
+    // roll relative to the calibrated grip without assuming the device was
+    // held flat or that the projected gravity vector has exactly 1g length.
+    // The QMI8658's hardware low-pass plus a two-tic entry confirmation avoids
+    // touch tremor without adding the delayed "watery" software low-pass used
+    // by the rejected pitch experiment. Touch gating guarantees that a device
+    // resting outside neutral cannot move the player on its own.
+    int64_t cross_q10 = (((int64_t)reference_z * raw.y)
+                       - ((int64_t)reference_y * raw.z)) * 1024;
+    int64_t dot = ((int64_t)reference_y * raw.y)
+                + ((int64_t)reference_z * raw.z);
+    cross_q10 *= DOOM_MOTION_ROLL_SIGN;
+
+    int8_t requested_strafe = 0;
+    if (dot > 0) {
+        int64_t start = dot * MOTION_STRAFE_START_TAN_Q10;
+        if (cross_q10 >= start) requested_strafe = 1;
+        else if (cross_q10 <= -start) requested_strafe = -1;
+    }
+
+    if (strafe_state == 0) {
+        if (requested_strafe == 0) {
+            strafe_candidate = 0;
+            strafe_candidate_tics = 0;
+        } else if (requested_strafe != strafe_candidate) {
+            strafe_candidate = requested_strafe;
+            strafe_candidate_tics = 1;
+        } else if (++strafe_candidate_tics >= MOTION_STRAFE_CONFIRM_TICS) {
+            strafe_state = strafe_candidate;
+            strafe_candidate = 0;
+            strafe_candidate_tics = 0;
+        }
+    } else {
+        int64_t stop = dot > 0 ? dot * MOTION_STRAFE_STOP_TAN_Q10 : 0;
+        bool returned_to_neutral = dot <= 0
+            || (cross_q10 > -stop && cross_q10 < stop);
+        bool crossed_center = (strafe_state > 0 && cross_q10 <= 0)
+                           || (strafe_state < 0 && cross_q10 >= 0);
+        bool crossed_to_opposite = requested_strafe == -strafe_state;
+        if (returned_to_neutral || crossed_center || crossed_to_opposite) {
+            strafe_state = 0;
+            strafe_candidate = crossed_to_opposite ? requested_strafe : 0;
+            strafe_candidate_tics = crossed_to_opposite ? 1 : 0;
+        }
+    }
+
+    if (strafe_state == 0 || dot <= 0) {
+        hybrid_motion_strafe = 0;
+        return;
+    }
+
+    int64_t magnitude = cross_q10 < 0 ? -cross_q10 : cross_q10;
+    int64_t start = dot * MOTION_STRAFE_START_TAN_Q10;
+    int64_t full = dot * MOTION_STRAFE_FULL_TAN_Q10;
+    int speed = MOTION_STRAFE_MIN;
+    if (magnitude > start) {
+        int64_t progress = magnitude - start;
+        int64_t range = full - start;
+        if (progress > range) progress = range;
+        speed += (int)(((int64_t)(MOTION_STRAFE_MAX - MOTION_STRAFE_MIN)
+                          * progress) / range);
+    }
+    hybrid_motion_strafe = strafe_state * speed;
+}
+#endif
+#endif
+
 #define DOUBLE_PRESS_WINDOW_US (400 * 1000)
 
 // Returns 0=none, 1=single, 2=double, 3=long. Verbatim port of the
 // calibration firmware's poll_pwr_button() (main.c) - already validated.
-static int PollPwrButton(void)
+static int PollPwrButton(pwr_button_event_t ev)
 {
     static absolute_time_t last_short_press;
     static bool awaiting_double = false;
 
-    pwr_button_event_t ev = pwr_button_poll();
-
-    if (ev == PWR_BUTTON_LONG_PRESS) {
+    if (ev & PWR_BUTTON_LONG_PRESS) {
         // The AXP2101 already handles the actual power-toggle in hardware
         // for a long press - nothing for us to do with this event.
         awaiting_double = false;
         return 3;
     }
 
-    if (ev == PWR_BUTTON_SHORT_PRESS) {
+    if (ev & PWR_BUTTON_SHORT_PRESS) {
         if (awaiting_double &&
             absolute_time_diff_us(last_short_press, get_absolute_time()) < DOUBLE_PRESS_WINDOW_US) {
             awaiting_double = false;
@@ -714,8 +1069,29 @@ static void PollHardwareControls(void)
     static bool ready = false;
     if (!ready) {
         FT3168_Init(FT3168_Point_Mode);
+#if DOOM_HYBRID_CONTROLS
+#if DOOM_ROLL_STRAFE
+        hybrid_imu_available = qmi8658_init_accelerometer();
+#endif
+        pwr_button_enable_edges();
+#endif
         ready = true;
     }
+
+    // menuactive (m_menu.c) has no header declaration - it is a plain global,
+    // not part of the public menu API. Motion is never allowed to navigate
+    // menus: their proven swipe controls remain unchanged.
+    extern boolean menuactive;
+#if DOOM_HYBRID_CONTROLS
+    bool hybrid_game = !menuactive && gamestate == GS_LEVEL;
+#else
+    bool hybrid_game = false;
+#endif
+
+    static key_type_t touch_pending_key = 0;
+    static key_type_t pwr_pending_key = 0;
+    PulseKey(&touch_pending_key);
+    PulseKey(&pwr_pending_key);
 
     // The FT3168 can jitter between adjacent directions. Posting every sample
     // change produces an
@@ -726,38 +1102,79 @@ static void PollHardwareControls(void)
     static key_type_t held_touch_key = 0;
     static key_type_t candidate_touch_key = 0;
     static uint8_t candidate_touch_tics = 0;
-    key_type_t touch_key = PollTouchMovementKey();
 
-    if (touch_key == held_touch_key) {
-        candidate_touch_key = 0;
-        candidate_touch_tics = 0;
-    } else if (touch_key == 0) {
+    if (hybrid_game) {
         if (held_touch_key) PostKeyEvent(ev_keyup, held_touch_key);
         held_touch_key = 0;
         candidate_touch_key = 0;
         candidate_touch_tics = 0;
+
+#if DOOM_HYBRID_CONTROLS
+        if (hybrid_touch_strafe_tics > 0
+            && --hybrid_touch_strafe_tics == 0) {
+            hybrid_touch_strafe = 0;
+        }
+
+        hybrid_touch_action_t touch_action = PollHybridTouch(true);
+        if (touch_action == HYBRID_TOUCH_ACTION_USE) {
+            PostKeyEvent(ev_keydown, key_use);
+            touch_pending_key = key_use;
+        } else if (touch_action == HYBRID_TOUCH_ACTION_STRAFE_LEFT) {
+            hybrid_touch_strafe = -HYBRID_TOUCH_STRAFE_SPEED;
+            hybrid_touch_strafe_tics = HYBRID_TOUCH_STRAFE_TICS;
+        } else if (touch_action == HYBRID_TOUCH_ACTION_STRAFE_RIGHT) {
+            hybrid_touch_strafe = HYBRID_TOUCH_STRAFE_SPEED;
+            hybrid_touch_strafe_tics = HYBRID_TOUCH_STRAFE_TICS;
+        }
+#if DOOM_ROLL_STRAFE
+        PollHybridMotion(true, hybrid_touch_down);
+#endif
+#endif
     } else {
-        if (touch_key != candidate_touch_key) {
-            candidate_touch_key = touch_key;
-            candidate_touch_tics = 1;
-        } else if (++candidate_touch_tics >= 2) {
-            if (held_touch_key) PostKeyEvent(ev_keyup, held_touch_key);
-            PostKeyEvent(ev_keydown, touch_key);
-            held_touch_key = touch_key;
+#if DOOM_HYBRID_CONTROLS
+        PollHybridTouch(false);
+#if DOOM_ROLL_STRAFE
+        PollHybridMotion(false, false);
+#endif
+#endif
+        key_type_t touch_key = PollTouchMovementKey();
+
+        if (touch_key == held_touch_key) {
             candidate_touch_key = 0;
             candidate_touch_tics = 0;
+        } else if (touch_key == 0) {
+            if (held_touch_key) PostKeyEvent(ev_keyup, held_touch_key);
+            held_touch_key = 0;
+            candidate_touch_key = 0;
+            candidate_touch_tics = 0;
+        } else {
+            if (touch_key != candidate_touch_key) {
+                candidate_touch_key = touch_key;
+                candidate_touch_tics = 1;
+            } else if (++candidate_touch_tics >= 2) {
+                if (held_touch_key) PostKeyEvent(ev_keyup, held_touch_key);
+                PostKeyEvent(ev_keydown, touch_key);
+                held_touch_key = touch_key;
+                candidate_touch_key = 0;
+                candidate_touch_tics = 0;
+            }
         }
     }
 
-    static key_type_t button1_pending_key = 0, button2_pending_key = 0;
-    PulseKey(&button1_pending_key);
-    PulseKey(&button2_pending_key);
+    pwr_button_event_t pwr_events = pwr_button_poll();
+#if DOOM_HYBRID_CONTROLS
+    if (hybrid_game) {
+        if (pwr_events & PWR_BUTTON_PRESS_EDGE) {
+            PostKeyEvent(ev_keydown, key_fire);
+            pwr_pending_key = key_fire;
+        }
+        // Release and long-press events are intentionally ignored in-level.
+        // PWR is the physical power control, so gameplay promises taps only.
+        return;
+    }
+#endif
 
-    // menuactive (m_menu.c) has no header declaration - it's a plain
-    // global, not part of the public menu API.
-    extern boolean menuactive;
-
-    int pwr = PollPwrButton();
+    int pwr = PollPwrButton(pwr_events);
     if (pwr == 1) {
         // Single-press: "confirm/select" in the menu (key_menu_forward,
         // vanilla default KEY_ENTER - menu navigation doesn't listen for
@@ -766,15 +1183,42 @@ static void PollHardwareControls(void)
         // 2026-08-16 (cont'd)), otherwise fire.
         key_type_t k = menuactive ? key_menu_forward : key_fire;
         PostKeyEvent(ev_keydown, k);
-        button1_pending_key = k;
+        pwr_pending_key = k;
         bootlog_print(menuactive ? "IN: PWR single (menu select)" : "IN: PWR single (fire)");
     } else if (pwr == 2) {
         // Double-press: "back" in the menu, otherwise use.
         key_type_t k = menuactive ? key_menu_back : key_use;
         PostKeyEvent(ev_keydown, k);
-        button2_pending_key = k;
+        pwr_pending_key = k;
         bootlog_print(menuactive ? "IN: PWR double (menu back)" : "IN: PWR double (use)");
     }
+}
+
+void I_ApplyHardwareTiccmd(ticcmd_t *cmd)
+{
+#if DOOM_HYBRID_CONTROLS
+    if (cmd == NULL) return;
+
+    int forward = (int)cmd->forwardmove + hybrid_forward;
+    if (forward > 50) forward = 50;
+    if (forward < -50) forward = -50;
+    cmd->forwardmove = (signed char)forward;
+
+    int strafe = (int)cmd->sidemove + hybrid_touch_strafe;
+#if DOOM_ROLL_STRAFE
+    strafe += hybrid_motion_strafe;
+#endif
+    if (strafe > 40) strafe = 40;
+    if (strafe < -40) strafe = -40;
+    cmd->sidemove = (signed char)strafe;
+
+    int turn = (int)cmd->angleturn + hybrid_turn;
+    if (turn > INT16_MAX) turn = INT16_MAX;
+    if (turn < INT16_MIN) turn = INT16_MIN;
+    cmd->angleturn = (short)turn;
+#else
+    (void)cmd;
+#endif
 }
 
 void I_InputInit(void) {

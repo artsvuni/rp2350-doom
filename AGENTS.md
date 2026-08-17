@@ -9,22 +9,25 @@ Before doing anything in this repo, read:
    fix), and the "Open questions" section at the bottom, which is the
    most current list of what's unresolved.
 
-Also worth a skim: `../CLAUDE.md` (one level up) — this folder is one of
-several projects sharing a hardware workspace; `../mp3player/` has proven
-driver code for this exact board that this project reuses/adapts.
+Also worth a skim: the sibling
+`../rp2350-touch-amoled-1.8-knowledge-base/` repository contains reusable
+hardware/development findings, and `../mp3player/` has proven driver code for
+this exact board that this project reuses/adapts.
 
-As of 2026-08-16: the game runs and is playable on hardware. The
-immediate open bug is a freeze during actual gameplay after a burst of
-touch-input events — see `docs/DECISIONS.md`'s most recent dated entry
-and "Open questions" for exactly what's known and suspected. Don't
-re-diagnose the two already-fixed freezes (zone corruption from a stray
-`calloc()`, zone exhaustion from re-enabling the display) - they're
-resolved; read the DECISIONS.md entries if curious about how, not to
-redo the work.
+As of 2026-08-17: the game runs and is playable on hardware, and the latest
+effects-only run progressed into E1M2 without freezing. The immediate priority
+is a measured performance pass toward a larger view, followed by motion-control
+experiments; see `docs/ROADMAP.md`. The earlier combat freeze remains a watch
+condition, not the default explanation for every problem. Don't re-diagnose the
+two already-fixed freezes (zone corruption from a stray `calloc()`, zone
+exhaustion from re-enabling the display)—they're resolved; read the dated
+`docs/DECISIONS.md` entries for the evidence.
 
-Flashing/testing requires physical access to the board (BOOTSEL mode,
-photographing the AMOLED screen) - if you can't do that, say so rather
-than guessing at hardware behavior.
+When compatible USB firmware is running, `picotool -f --ser ...` can reboot the
+board into ROM BOOTSEL, flash/verify it, and return to the application without a
+physical BOOT press. Manual BOOTSEL remains the recovery fallback. A successful
+tool write does not prove display, audio, touch, motion, or gameplay behaviour;
+obtain physical confirmation rather than guessing.
 
 ## Git workflow
 

@@ -22,6 +22,7 @@
 #define __I_INPUT__
 
 #include "doomtype.h"
+#include "d_ticcmd.h"
 
 #define MAX_MOUSE_BUTTONS 8
 
@@ -30,6 +31,7 @@ extern int mouse_threshold;
 
 void I_BindInputVariables(void);
 void I_ReadMouse(void);
+void I_ApplyHardwareTiccmd(ticcmd_t *cmd);
 
 // I_StartTextInput begins text input, activating the on-screen keyboard
 // (if one is used). The caller indicates that any entered text will be

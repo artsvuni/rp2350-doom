@@ -654,6 +654,11 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
  
     cmd->forwardmove += forward; 
     cmd->sidemove += side;
+
+    // The RP2350 hybrid control model produces proportional movement and
+    // turning intentions directly. Keeping this at the ticcmd boundary avoids
+    // reducing analog motion to a burst of virtual key transitions.
+    I_ApplyHardwareTiccmd(cmd);
     
     // special buttons
     if (sendpause) 

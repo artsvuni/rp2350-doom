@@ -155,7 +155,11 @@ UBYTE DEV_Module_Init(void)
     if (initialized) return 0;
     initialized = true;
 
-    stdio_init_all();
+    // Stdio belongs to the executable entry point, not this reusable hardware
+    // helper. Doom calls DEV_Module_Init() from bootlog_init() and then calls
+    // stdio_init_all() in main; initializing TinyUSB here as well can reset its
+    // device state while macOS still holds the first enumeration. That matches
+    // the observed visible CDC/reset interface whose requests and output stall.
     sleep_ms(1000);
     DEV_GPIO_Init();
 

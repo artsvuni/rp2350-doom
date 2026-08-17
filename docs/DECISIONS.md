@@ -1,5 +1,399 @@
 # Decisions Log
 
+## 2026-08-18 — Replace tilt strafe with corner dodge bursts and soften movement
+
+F10 confirmed that roll input and strafe output function, but rejected the
+touch-gated interaction. The player naturally expected tilt to work without a
+finger. More importantly, changing the device angle before touching could arm
+an immediate sidestep against the older neutral reference. Recalibrating at
+touch-down would erase the intended held angle, while always-on roll would
+restore F1's accidental movement. Continuous tilt strafing is therefore not
+the active control direction.
+
+F11 compiles `DOOM_ROLL_STRAFE` off and uses deterministic touch gestures.
+Double-tapping the bottom-left or bottom-right 96x72-pixel corner emits a
+six-tic, 32-unit strafe burst in that direction; repeated double taps repeat the
+dodge. The burst does not latch. Double-tapping anywhere else preserves
+Use/Open, so the existing door interaction remains reachable.
+
+Forward/back also felt too fast through the middle of its gesture. F11 keeps
+the one-pixel guard, 4-unit initial response, and 50-unit maximum, but replaces
+the 88-pixel linear mapping with a 140-pixel quadratic curve. At the old
+88-pixel full-scale point it now produces about normal walking speed; maximum run
+requires a deliberate reach toward the far side of the display.
+
+The locked 448x280 asynchronous F11 build ends at `0x2004930c`, leaving 224,500
+bytes before `__StackLimit`, and contains no QMI8658 input symbols. UF2 SHA-256
+is `ec00e1262a4a3f53f93c9cb09cd6fc49b4e39ef4d9fe2ae820f30d1f1eba2cd6`.
+The first hardware judgement was that corner strafe is better than having no
+strafe, but not compelling enough to justify more tuning in this session. F11
+is the wrap-up build; exact burst length and the new movement curve remain
+future checks rather than blockers.
+
+## 2026-08-18 — Keep 448x280 locked and measure 448x336 before full-panel fill
+
+The AMOLED is 448x368 in landscape. Current 448x280 output fills the width and
+leaves 44-pixel bands above and below. Filling 448x368 would emit 31.4% more
+pixels and cannot preserve the whole raw 16:10 image without stretching,
+cropping, or redesigning the renderer/UI.
+
+A 448x336 candidate is the better next experiment: it applies traditional 4:3
+display correction, leaves only 16-pixel bands, and emits 20.0% more pixels
+than the measured baseline. Keep 448x280 locked until a comparable combat
+capture proves that 448x336 preserves pacing and audio. The bands may instead
+be useful later for quiet port UI such as battery state.
+
+## 2026-08-18 — Gate deliberate proportional roll strafing behind active touch
+
+F9 is an acceptable pointing-finger touch baseline: small motion supports
+precision and a deliberate larger displacement turns quickly. The next motion
+experiment therefore adds an optional secondary action without retuning or
+replacing touch navigation.
+
+The earlier F1 roll candidate was rejected because a six-degree threshold,
+three-degree stop zone, fixed 24-unit output, and level-start reference allowed
+uncommanded lateral movement while no finger was down. F10 redesigns that
+contract. Roll strafing can exist only while the touchscreen control is held;
+releasing the finger sets `sidemove` to zero immediately. While released, 18
+stable accelerometer samples learn the player's current comfortable grip.
+Touch-down freezes the latest completed reference so active play cannot move
+neutral underneath the player.
+
+Strafe starts only after two consecutive samples beyond roughly 10 degrees and
+stops inside roughly 5 degrees or upon crossing centre. Output scales from 8
+to 32 Doom movement units, reaching full response around 22 degrees. This uses
+accelerometer gravity position, not gyro rate, because the intended held-angle
+action is Mario-Kart-like; gyro integration would introduce drift.
+There is no latch, and no-touch movement is structurally impossible.
+
+F10 remains behind default-off `DOOM_ROLL_STRAFE` until physically accepted.
+The locked 448x280 asynchronous build ends at `0x20049330`, leaving 224,464
+bytes before `__StackLimit`; the 40-byte delta from F9 is the restored QMI8658
+path and motion state. UF2 SHA-256 is
+`af30c8362cb6cd837bedb560e71998057f7f577a40e6fc28c5e9174c04777816`.
+
+## 2026-08-17 — Add stronger outer-edge turning for the pointing finger
+
+F8 established the pointing finger as the intended relative-control contact.
+Its expanded 112-pixel quadratic turn range makes small motion suitably calm,
+but large reorientation now takes too much effort. Forward/back was not
+reported as the problem and remains unchanged.
+
+F9 keeps the one-pixel guard, 48-unit initial turn, 112-pixel full-scale range,
+and quadratic curve, but raises the outer maximum from 640 to 960. Because the
+increase is multiplied by the square of displacement, its effect remains small
+near the anchor and grows strongly toward the edge. This implements the desired
+contract directly: small pointing-finger motion turns slowly; a deliberate
+large movement turns quickly.
+
+The 960 bound is below Doom's 1280 fast-turn value and matches an earlier
+hardware candidate's maximum, but that candidate had a shorter range, larger
+minimum, different dead zone, and pre-repair touch reporting. F9 therefore
+requires a new physical judgement rather than inheriting the earlier rejection.
+
+## 2026-08-17 — Trade compact full scale for pointing-finger precision
+
+The F7 driver repair produced the first clearly immediate fine input: a smaller
+pointing-finger contact now moves and turns after subtle physical motion. This
+validates Active mode and coherent samples directionally. A broad thumb remains
+less responsive. The leading explanation is that the current interface exposes
+one X/Y point for the broad contact, whose reported position can remain stable
+while the contact shape changes; this is an inference, not yet an instrumented
+measurement.
+
+The newly visible problem is excessive gain. F7 reaches the 50-unit run bound
+after only 44 pixels and the 640 turn bound after 56 pixels—roughly a few
+millimetres on this panel. With a precise pointing finger, normal motion can
+therefore reach maximum response too easily.
+
+F8 changes only full-scale distance. Movement keeps its one-pixel guard,
+4-to-50 linear curve, and doubles full scale from 44 to 88 pixels. Turning keeps
+its one-pixel guard, 48-to-640 quadratic curve, and doubles full scale from 56
+to 112 pixels. Initial response remains immediate and maximum capability is not
+removed, but small and medium motion become substantially more precise.
+
+Thumb ergonomics are not declared solved. If pointing-finger precision becomes
+enjoyable but the thumb remains unreliable, the next independent experiment is
+the proposed fixed bottom-left eight-way D-pad, where initial touch position
+commands direction without requiring centroid movement away from an anchor.
+
+## 2026-08-17 — Repair FT3168 tracking before changing the control model
+
+F6 reduced both software dead zones to one pixel, yet Alexander still needed
+roughly a centimetre of physical finger travel before Doom reacted. That cannot
+be explained by the control mapping: F6 emits output after the second reported
+coordinate step. Pressing harder appeared to help, but the FT3168 is capacitive
+and has no pressure channel; changing contact area can instead change the
+reported touch position.
+
+The inherited driver put register `0xA5` into Monitor mode (`0x01`) even when
+the caller explicitly requested point tracking. The FT3168 datasheet says
+Monitor mode detects a valid touch but does not perform full tracking or report
+coordinates until it returns to Active mode. Active mode scans at 60Hz by
+default. The driver also read finger count, X, and Y through four separate I2C
+transactions, allowing state and axes to come from different scan frames.
+
+F7 repairs the driver rather than retuning controls. Point mode now writes
+Active (`0x00`) and each poll reads registers `0x02..0x06` in one five-byte
+burst, returning finger count and coherent X/Y from the same register snapshot.
+Gesture mode retains Monitor mode. F6's one-pixel guards, response curves,
+ranges, maximums, diagonals, and release-to-stop remain unchanged.
+
+Both the Doom and standalone hardware-test targets build. Doom text shrinks by
+104 bytes, static SRAM remains unchanged at `__end__=0x20049308`, and exact zone
+headroom remains 224,504 bytes. Hardware must now establish whether 1–2mm
+motion is reported immediately; success is not inferred from the build.
+
+Primary references:
+
+- https://files.waveshare.com/wiki/common/DATA_SHEET_FT3168.pdf
+- https://www.waveshare.com/wiki/RP2350-Touch-AMOLED-1.8
+
+## 2026-08-17 — Replace broad dead zones with a one-pixel jitter guard
+
+F5 made forward/back progressive, but the physical test confirmed that the
+remaining 4-pixel vertical and 6-pixel horizontal dead zones still felt like
+input delay. Once each axis activated, its non-zero minimum output also made
+the transition feel more aggressive than the preceding silence.
+
+F6 keeps one pixel on each axis only as a quantisation/jitter guard; deliberate
+movement can therefore produce output from the next coordinate step. To avoid
+replacing delay with a hard jump, the initial forward output falls from 8 to 4
+and initial turn output from 80 to 48. The existing linear movement and
+quadratic turn curves preserve almost the same mid-range response, while full
+scale remains 50 movement units at 44 pixels and 640 turn units at 56 pixels.
+
+This is deliberately not a zero-dead-zone build. A stable finger can move by a
+single reported pixel due to capacitive contact noise; the one-pixel guard is
+the smallest practical protection. If it still feels delayed, zero becomes a
+valid controlled experiment. If it drifts, use explicit jitter filtering or
+hysteresis rather than restoring a broad unresponsive centre.
+
+## 2026-08-17 — Make vertical touch immediate and progressive
+
+The F4 hardware test improved compact left/right responsiveness, but exposed an
+unbalanced vertical mapping. Turning began after 6 pixels and scaled with thumb
+travel, while forward/back waited for 10 pixels and then jumped directly to a
+fixed 25-unit walk speed. Slow deliberate thumb motion therefore appeared to do
+nothing for too long, followed by an abrupt single-speed response.
+
+F5 changes only vertical response. Its dead zone falls to 4 pixels, then a
+linear mapping starts at 8 movement units and reaches Doom's bounded 50-unit
+run speed at 44 pixels. This provides the requested small-motion/slow-movement
+and larger-motion/faster-movement progression. Release still guarantees stop.
+
+Diagonal touch is retained because the two axes are calculated independently:
+it does not steal or suppress horizontal input, and in Doom it produces the
+essential ability to move while turning rather than an implicit strafe. F4's
+6-pixel, 80-to-640 quadratic horizontal response remains unchanged so the next
+hardware test isolates the vertical transfer function.
+
+## 2026-08-17 — Strengthen short horizontal combat swipes
+
+F3 stayed playable and Alexander completed E1M1, but turning remained the
+limiting control in E1M2 combat. Forward/back felt good. Short repeated
+left/right swipes often failed to produce enough visible rotation, making it
+difficult to track enemies while firing.
+
+The issue is the compact cubic mapping, not its maximum: much of a short swipe
+remains close to the minimum output. F4 keeps the 56-pixel range and maximum 640
+turn rate, reduces the horizontal dead zone from 8 to 6 pixels, raises minimum
+output from 64 to 80, and changes cubic response to quadratic. This increases
+small/mid displacement response without exceeding the accepted speed ceiling.
+Forward/back and every other control remain unchanged.
+
+## 2026-08-17 — Compress the floating touch control into the bottom-left grip
+
+The touch-only F2 test is the strongest result so far: Alexander could play and
+progress more easily than with every prior control model. The remaining major
+cost is that horizontal turning requires too much finger travel, obscuring the
+full-screen view. His preferred interaction is a finger held in the bottom-left
+area with small movements producing the complete useful response.
+
+The current touch model already anchors neutral wherever the finger lands, so
+the next experiment does not need fixed quadrants, an overlay, or a second
+input architecture. F3 changes one transfer function. Full horizontal response
+now fits within 56 pixels instead of 120. The dead zone moves from 10 to 8
+pixels, minimum output from 80 to 64, maximum remains 640, and the quadratic
+curve becomes cubic. This preserves fine control near neutral while allowing
+normal maximum turning inside the compact grip area.
+
+Forward/back, release-to-stop, diagonal combination, double-tap Use, tap-fire,
+and the compiled-out IMU are unchanged. Keep the full screen touch-capable for
+now; consider restricting or visualising the bottom-left control region only
+after the response itself is physically accepted.
+
+## 2026-08-17 — Disable roll strafing and tune touch in isolation
+
+The first touch-plus-roll test clearly preferred the touch navigation direction,
+but rejected the combined experiment. Horizontal turning still accelerated too
+quickly for precise control on the small display. More importantly, the player
+repeatedly strafed left/right with no finger touching the screen. In this build,
+no-touch lateral movement can only be produced by the calibrated roll
+`sidemove` path, so this is not ambiguous touch noise.
+
+Decision: disable motion completely while touch is tuned. `DOOM_ROLL_STRAFE`
+now independently guards IMU initialisation, every accelerometer read, motion
+state, and `sidemove` application; it defaults off. The code remains available
+for a later controlled experiment, but the active build performs no gameplay
+motion-sensor work.
+
+Touch forward/back remains unchanged. Turning maximum falls from 960 to 640,
+the minimum from 120 to 80, the dead zone grows from 8 to 10 pixels, and full
+scale moves from 96 to 120 pixels. This substantially reduces both near-anchor
+and maximum turn response without changing another control variable.
+
+The touch-only full-width build ends at `0x20049308`, leaving 224,504 zone bytes;
+the opt-in roll build still ends at `0x20049330`, and the fallback remains at
+`0x200492e8`. Touch-only, roll-enabled, and fallback configurations all build.
+
+## 2026-08-17 — Demote tilt to optional roll strafing and restore touch navigation
+
+The third pitch-movement test was learnable but still not dependable. Movement
+could begin after a small accidental tilt, the activation point was difficult
+to find consistently, and trying to stop could cross the narrow neutral region
+and immediately command reverse. This confirms that pitch should not own an
+essential navigation action on this device.
+
+Published evidence supports the split rather than arguing for more pitch
+tuning. Touch was faster and more accurate than accelerometer input in a mobile
+game comparison, while tilt was perceived as engaging. A dual-control shooter
+study found tilt movement viable but also observed unintended continuous motion
+when players rested outside its five-degree dead zone. Wrist-dexterity research
+identifies pronation/supination as a strong tilt axis, and order-of-control work
+supports direct held-position mappings over velocity-style control.
+
+Decision: touch now owns simultaneous forward/back and turning, with release as
+a guaranteed stop. Horizontal turning keeps its anchor-relative quadratic
+mapping but reduces its maximum from 1600 to 960 after Alexander found it too
+sensitive. Vertical movement uses a 10-pixel dead zone and fixed normal walking
+speed. Double-tap remains Use/Open and PWR remains tap-fire.
+
+Motion is demoted to optional roll strafing. A stable 18-tic grip calibration
+defines neutral in the accelerometer Y/Z plane. Strafing begins only after two
+consecutive samples beyond roughly six degrees and stops inside roughly three
+degrees. It uses the QMI8658 hardware low-pass but removes the extra software
+low-pass that contributed to delayed, watery feedback. A cross/dot angle test
+makes the thresholds independent of the comfortable grip's projected gravity
+magnitude. Returning neutral always stops and no value latches.
+
+The full-width hybrid build ends at `0x20049330`, 72 static bytes above the
+locked video baseline and leaving 224,464 zone bytes. The fallback build still
+ends at `0x200492e8`. Both build successfully; physical left/right sign, touch
+direction, stopping, and combat value remain hardware gates.
+
+Primary references:
+
+- https://www.yorku.ca/mack/ec2017.pdf
+- https://www.yorku.ca/mack/mhci2013h.html
+- https://hci.cs.umanitoba.ca/publications/details/tilt-techniques-investigating-the-dexterity-of-wrist-based-input
+- https://www.yorku.ca/mack/ie2014.html
+
+## 2026-08-17 — Reject tilt latching; use one fixed neutral with hysteresis
+
+The second motion test rejected the stateful movement gearbox. Forward tilt
+initially moved backward, commands arrived late, and the player sometimes kept
+walking or changed direction after Alexander expected a stop. This is not just
+a sign error: automatically rebasing each settled pose made neutral move under
+the player, while the one-degree threshold and filter made transitions both
+noise-sensitive and delayed.
+
+The third candidate returns to direct position control. It calibrates
+Alexander's comfortable roughly 11-o'clock pose once, only after 18 samples
+remain stable both sample-to-sample and across the whole window. Signed X/Z
+gravity-plane rotation is measured against that fixed reference. The observed
+direction is inverted, movement starts at 430 raw-equivalent counts (roughly
+1.5 degrees in the ideal plane), and stops at 180 counts (roughly 0.6 degrees).
+Forward and backward both use normal Doom walk speed. The only retained state
+is start/stop hysteresis; movement never latches and neutral never moves.
+
+The physical BOOTSEL sequence has not changed: unplug USB, hold BOOT, reconnect,
+then release after about two seconds. Asking Alexander to continue holding while
+the host confirmed enumeration was an unnecessarily cautious instruction, not
+a new hardware requirement.
+
+The candidate adds 76 static bytes over the locked full-width baseline, leaving
+224,460 zone bytes. Both hybrid and fallback builds pass; hardware validation
+of direction, start sensitivity, and reliable return-to-neutral stopping is
+pending.
+
+## 2026-08-17 — Replace absolute tilt with a stateful movement gearbox
+
+The first hybrid hardware test produced a useful split result. Horizontal
+anchor-relative touch turning felt responsive and enjoyable, and touchscreen
+double-tap reliably opened a door. Those interactions stay unchanged.
+
+The proportional single-axis motion mapping is rejected. From Alexander's
+comfortable roughly 11-o'clock grip, useful movement appeared only after a
+large tilt toward 9 o'clock. The implementation compounded its 950-count dead
+zone by emitting only seven Doom movement units at first activation, far below
+normal keyboard walking speed.
+
+The replacement treats tilt as a small directional gesture controlling three
+latched states: reverse, stopped, and forward. It reads accelerometer XYZ in one
+burst and derives signed pitch from X/Z gravity-vector rotation relative to the
+last settled pose. A roughly 320-count signal advances one state at fixed normal
+Doom walking speed. Afterward, five stable tics rebase the comfortable pose and
+re-arm input. This makes an opposite gesture stop first and prevents a single
+continuous sweep from crossing directly into reverse.
+
+Held PWR is also rejected. Hardware produced several shots, then the PMIC long
+event opened the menu; a longer hold subsequently appeared to restart the game.
+In-level PWR now emits one immediate one-tic fire pulse from the press edge and
+ignores release/long events. Escape/menu is intentionally left unresolved
+rather than competing with the physical power control.
+
+The new build uses no heap allocation and adds 80 static bytes over the locked
+full-width baseline, leaving 224,456 zone bytes. Hardware must now validate
+pitch sign, small-gesture threshold, state re-arm, dependable stopping, and
+tap-fire.
+
+## 2026-08-17 — Build the first hybrid control candidate around combat intent
+
+The first selectable motion candidate is now **horizontal touch turning plus
+pitch movement**, superseding the earlier tentative ordering of hybrid axes.
+This matches Alexander's preferred interaction and gives each input one job:
+the device controls travel while the finger controls view direction. It also
+keeps accelerometer tilt away from precise aiming, where prior comparative
+research found touch stronger for orientation.
+
+The in-level action mapping is deliberately redesigned rather than preserving
+the delayed legacy click patterns:
+
+- pitch tilt produces bounded proportional forward/back movement and neutral
+  stops;
+- horizontal displacement from the touch-down anchor produces a quadratic,
+  bounded turn rate;
+- a clean touchscreen double-tap emits Use/Open once;
+- AXP2101 PWRON press/release edges hold fire with at most one Doom-tic polling
+  delay; and
+- the AXP2101 long-press event opens Escape/menu, without reading BOOT.
+
+Menus keep the existing floating swipe navigation and PWR short/double click
+semantics. `DOOM_HYBRID_CONTROLS` is compile-time optional so the hardware-proven
+floating-touch model remains a recovery build.
+
+The QMI8658 driver is intentionally smaller than the vendor demo: probe both
+documented I2C addresses, validate every transaction count, enable only the
+accelerometer at +/-2g and 62.5Hz with its LPF, and read one 16-bit axis per
+tic. Gyro remains off because it is unnecessary for gravity-relative pitch,
+adds power and filtering complexity, and cannot earn its place until the basic
+interaction is tested. Direct fixed-point output at `ticcmd_t` avoids noisy
+virtual-key transitions and adds only 48 bytes of static SRAM to the locked
+full-width build.
+
+No physical feel claim is made yet. The next gate is a short test of sensor
+axis/sign, neutral stopping, turn direction/range, double-tap door use, held
+fire, and PWR edge polarity. Long-session combat testing follows after control
+tuning, as requested.
+
+Primary references:
+
+- https://www.qstcorp.com/upload/pdf/202210/13-52-27%20QMI8658C%20Datasheet%20Rev%20A%20%281%29.pdf
+- https://files.waveshare.com/wiki/common/X-power-AXP2101_SWcharge_V1.0.pdf
+- https://doi.org/10.1016/j.entcom.2017.04.005
+- https://www.yorku.ca/mack/gi2014.html
+
 ## 2026-08-15 — Control scheme design discussion
 Minimal action set to actually complete Doom (it's 2.5D — turning doubles
 as aiming, there's no separate look axis): move forward, turn left/right,
@@ -1160,22 +1554,326 @@ behind behavior-preserving interfaces. Make one static-buffer/dead-code/data-flo
 change at a time and hardware-test it, recording SRAM and frame-time deltas. This
 keeps regressions bisectable and avoids mistaking code movement for optimization.
 
+## 2026-08-17 — Prioritise an enjoyable handheld experience; performance before controls
+
+Alexander confirmed the safe effects-only build progressed from E1M1 into E1M2
+without freezing and felt generally good. This does not prove unlimited
+stability, but the earlier combat freeze is no longer reproduced in the latest
+meaningful run and should not block every other experiment.
+
+The product goal is now explicit: move beyond "Doom runs" to a handheld port
+that is enjoyable and controllable enough to finish. Full-width 448x280 is the
+visual ambition, but not at the expense of frame pacing, input response, sound
+effects, or the short-pointer memory margin. Music remains optional because the
+working lightweight synthesizer sounded worse than effects-only audio on this
+speaker. Later experience ideas—battery indication, a port settings menu, and
+an optional reduced/hidden vanilla HUD—come after performance and controls.
+
+Engineering order is performance first, then detailed motion-control tuning.
+The next phase measures game tics, rendering, packing/scaling, DMA/QSPI waits,
+audio queue pressure, stack high-water marks, zone headroom, and input latency.
+Video experiments then advance through 384x240 and 416x260 toward 448x280. A
+display-driver rewrite is justified only if profiling shows the current
+presentation boundary is the constraint; the proven non-blocking SFX driver is
+preserved unless measurements disagree.
+
+Once the best sustainable view is locked, the first motion experiment is
+Alexander's proposed hybrid: horizontal touch/drag turns left/right while
+device pitch controls forward/back and neutral stops movement. This will be
+compared with full tilt and the alternate tilt-steering/touch-movement hybrid.
+Accelerometer gravity supplies stable pitch/roll, gyro rate can add fast
+response, and any combined model needs neutral calibration, filtering, dead
+zone/hysteresis, nonlinear bounded output, and explicit recentering. Detailed
+phases and acceptance rules are now in `docs/ROADMAP.md`.
+
+The same session established a safer development loop on the new Mac. The full
+16 MiB flash was backed up, the source-unchanged SDK 2.3.0 build matched the
+installed 382,228-byte firmware range byte-for-byte, and `picotool load -v -f
+--ser ...` rebooted the running firmware into ROM BOOTSEL, wrote and verified
+the UF2, then rebooted into Doom without Alexander pressing BOOT. This
+host-driven reset does not reverse the decision against application-side BOOT
+sampling.
+
+## 2026-08-17 — Add measured selectable presentation before rewriting the driver
+
+The first performance implementation keeps Doom's renderer at its native
+320x200 indexed output and makes only the AMOLED boundary selectable. CMake now
+accepts 320x200, 384x240, 416x260, or 448x280. The scaled path composes palette
+and overlays once per source row, then uses biased integer accumulators whose
+output exactly matches `floor(output * source / target)` on both axes. Pixel
+byte-swap and portrait tile transpose remain fused; there is no scaled-frame
+allocation and no per-output-pixel division.
+
+Profiling is opt-in and reports one summary per 128 frames. It separates game,
+render, display-frame wait, core1 rendezvous, presentation preparation, AMOLED
+transfer, complete cadence, and display DMA recovery counts. USB output is
+bounded to a 2ms timeout and the sampling window resets even when no host is
+connected. The normal 320 build retains the established 234,776-byte zone;
+the 448 build retains 224,536 bytes. The scaled presenter's largest measured
+function frame is approximately 1.7KB on core1's dedicated 4KB stack.
+
+Every mode builds in Release, but no performance conclusion is claimed until
+320 and 448 are captured on the same hardware route. The first deployment
+attempt did not change flash: the existing application enumerated CDC and its
+correct vendor Reset interface, but reset control requests stalled despite
+successful interface claim. This is a runtime USB-state problem, not evidence
+against the candidate image; manual BOOTSEL remains the recovery path.
+
+## 2026-08-17 — Make profiling reset-persistent and remove duplicate USB initialisation
+
+The live gameplay capture failed in a specific way: macOS retained the Pico
+CDC device and the correct vendor Reset interface, but neither serial output
+nor reset control requests were serviced. This was not consistent with a Mac
+permission restriction because the same machine had already opened, flashed,
+and verified the board. Source inspection found that `bootlog_init()` called
+the reused Waveshare `DEV_Module_Init()`, which called `stdio_init_all()`, and
+then Doom's `main()` called `stdio_init_all()` again. TinyUSB was therefore
+initialised twice in one boot. Stdio ownership now sits at each executable
+entry point; the reusable hardware module no longer changes USB lifecycle.
+
+Profiling no longer requires USB to remain live during gameplay. An opt-in
+build waits for `GS_LEVEL` with a real user game, measures 384 presented frames,
+stores the aggregate report plus checksum in the linker's non-zeroed SRAM
+section, writes only a report magic to watchdog scratch, and reboots. It does
+not erase or program flash, so the firmware/WAD gap and WAD contents are not at
+risk. The next boot validates the checksum and stops before game graphics,
+core1, or audio start, repeating short report lines over USB and cycling key
+figures through the existing one-line AMOLED bootlog. A further reset clears
+the report mode and starts Doom normally.
+
+ARM GNU 15.3 Release builds succeed for both comparison modes. The persistent
+report and report-screen state move instrumented `__end__` to `0x20046b9c` at
+320x200 (234,596 zone bytes) and `0x2004939c` at 448x280 (224,356 zone bytes).
+The normal non-profiled memory baseline remains unchanged. Hardware deployment
+and the first captured report are still pending.
+
+## 2026-08-17 — Persist reports after reboot and measure one full minute
+
+Hardware proved the reset-retained capture and AMOLED report state, but CDC
+text remained silent even after duplicate TinyUSB initialisation was removed.
+An attempted host read of live SRAM also proved unsuitable because entering
+ROM BOOTSEL clears that RAM before `picotool` can save it. The report handoff
+therefore uses reserved flash, but never while gameplay or core1 is running:
+the watchdog first reboots, the checksum is validated from retained SRAM, then
+the single-core boot writes one page after erasing sector
+`0x101ff000..0x101fffff`. The WHD begins at `0x10200000`, so the log cannot
+overlap game data. `picotool` can then read and verify the record after ROM has
+cleared SRAM.
+
+The recovered first 320x200 non-combat capture measured 384 frames: average
+cadence 22,917us (max 37,970), presentation 15,439us (max 19,544), CPU
+preparation 11,663us, transfer 3,775us (max 4,168), render last/max
+8,102/18,610us, display wait last/max 3/8us, and zero DMA timeouts. Its game
+maximum included a 1,139,117us level-entry spike, so it is directional rather
+than the final baseline. CPU preparation is already much larger than panel
+transfer, making compose/transpose the leading display optimisation target.
+
+Alexander could not reach enemies before the 384-frame cutoff. The next format
+uses a 3-second warm-up to exclude level-entry work and then measures a true 60
+seconds using hardware time, independent of frame rate. Report version 2 stores
+the measured duration as well as sample count. The persistent-log profiler
+leaves 233,648 zone bytes at 320x200 and 223,408 at 448x280; normal builds are
+unchanged and pay none of this diagnostic cost.
+
+## 2026-08-17 — Use the one-minute combat baseline to target CPU presentation preparation
+
+The autonomous 320x200 capture completed successfully during real combat and
+persisted a checksum-valid version-2 report. It recorded 2,507 presented frames
+over 60,015,239us, or 41.8 FPS. Average/max frame cadence was
+23,948/42,958us; core1 work 7,091/22,905us; frame wait 1,367/7,047us; and
+presentation 15,460/20,351us. Within presentation, CPU preparation averaged
+11,664us while panel transfer averaged 3,795us and peaked at 4,197us. The last
+and maximum renderer samples were 12,457/26,048us. Display wait never exceeded
+8us and no DMA timeout occurred.
+
+The averages account for essentially the entire measured cadence: 7,091us of
+core1 work, 1,367us of rendezvous wait, and 15,460us of presentation total
+23,918us against the observed 23,948us cadence. CPU preparation alone consumes
+75.4% of presentation time and 48.7% of the average frame, while physical panel
+transfer consumes 15.8% of the frame. This makes the fused
+compose/scale/transpose loop—not QSPI bandwidth, display waiting, or DMA
+recovery—the first optimisation target.
+
+Do not rewrite the whole video driver before testing focused changes to packing
+locality and transpose-tile height. The current 40-row tile is now an
+experimental parameter rather than a permanent choice. Preserve the existing
+driver boundary and healthy asynchronous transfer path until measurements show
+that it prevents the target view size or frame rate.
+
+## 2026-08-17 — Make transpose-tile height selectable and test eight rows first
+
+The first focused candidate keeps the proven presenter and packed-DMA driver
+boundary intact but changes the transpose tile from a hard-coded 40 rows to a
+CMake comparison variable. AUTO selects eight rows for 320x200, 384x240, and
+448x280, and ten rows for 416x260 so every mode divides exactly. The original
+40-row path remains selectable for controlled A/B builds.
+
+At 320x200 the live tile falls from 25,600 to 5,120 bytes and `__end__` moves
+from `0x20046ae8` to `0x20041ae8`, increasing normal zone headroom from 234,776
+to 255,256 bytes. At 448x280 it falls from 35,840 to 7,168 bytes and `__end__`
+moves from `0x200492e8` to `0x200422e8`, increasing zone headroom from 224,536
+to 253,208 bytes. Full width now costs only 2,048 zone bytes versus native,
+rather than 10,240. Instrumented headroom is 254,128 and 252,080 bytes.
+
+The expected CPU benefit is a shorter destination stride—16 bytes instead of
+80—during the measured hot transpose loop. The tradeoff is 25 rather than five
+packed transfers at 320, and 35 rather than seven at 448. All four comparison
+builds pass, but neither image correctness nor a performance improvement is
+claimed until measured on the physical panel.
+
+The first physical 8-row 320x200 boot returned its application USB interface
+but left the AMOLED black. No timing capture was attempted. This rejects the
+candidate as a playable default and shows that build success plus memory
+recovery are insufficient for this panel path. Forty rows is restored as the
+default; alternate heights remain available only for isolated driver work.
+Rather than ask Alexander to repeat gameplay at the old size, the next
+experience test uses the full-width 448x280 40-row profiler, which retains
+223,408 bytes of instrumented zone headroom.
+
+## 2026-08-17 — Treat full-width 30 FPS as an achievable near-term target
+
+The 448x280 40-row image was flashed, byte-verified, and visually confirmed on
+the physical panel before measurement. Its reset-persistent report then
+captured 1,724 frames over 60,026,056us during real gameplay and combat, or
+28.7 presented FPS. Average/max cadence was 34,838/46,520us; core1 work
+3,781/13,229us; frame wait 2,094/3,740us; and presentation
+28,934/35,225us. Presentation split into 21,803us CPU preparation and
+7,130us average transfer, with transfer peaking at 7,600us. The last/maximum
+renderer samples were 22,254/31,316us. Display wait never exceeded 9us and no
+DMA timeout occurred.
+
+Full-width pixel count is 1.96 times native while measured presentation cost
+rose 1.87 times, so scaling is broadly efficient but still CPU-heavy. CPU
+preparation consumes 62.6% of average cadence and transfer 20.5%. Reaching
+30 FPS requires reducing the 34,838us average cadence by roughly 1,505us, only
+4.3%; reaching 35 FPS would require roughly 6,267us, or 18.0%. The engineering
+decision is therefore to keep 448x280 as the active target and pursue bounded
+packing/scaling improvements first. A wholesale video-driver rewrite or lower
+resolution is not justified by this result.
+
+## 2026-08-17 — Service audio between display chunks instead of growing the queue
+
+Alexander judged full-width gameplay playable to slightly sluggish, but menu
+effects lagged and sounded stretched. This is consistent with an audio
+underflow rather than a bad sample: each 512-sample block lasts 11.6ms at
+44.1kHz, so the two-buffer DMA queue covers 23.2ms. Measured full-width
+presentation averages 28.9ms and peaks at 35.2ms. Simple menu frames also make
+fewer incidental renderer-side `SafeUpdateSound()` calls than active gameplay.
+
+The first fix keeps the existing two-buffer DMA/IRQ backend and calls the
+non-blocking `I_UpdateSound()` after each completed 40-row packed panel
+transfer. At 448x280 this creates seven refill opportunities per presentation,
+after the display DMA mutex has been released. The mixer already uses a
+try-lock and returns immediately when no effect is active or the queue is full.
+This adds no audio buffers, queue latency, or static-memory cost. Normal and
+profiled 320x200 and 448x280 Release images build with unchanged linker
+endpoints. Hardware listening is required before accepting the change.
+
+## 2026-08-17 — Pipeline 20-row tiles without increasing static memory
+
+The measured synchronous presenter spends 7.1ms per full-width frame inside
+panel calls even though transfers use DMA, because every packed-window call
+waits for DMA before returning. The first driver-level optimisation therefore
+separates packed submission from completion and lets core1 compose the next
+tile while the panel consumes the previous one.
+
+The candidate is compile-selectable with `DOOM_ASYNC_AMOLED=ON` and requires
+20-row tiles. Two buffers together contain the same 17,920 RGB565 pixels, or
+35,840 bytes, as the proven single 40-row tile. The AMOLED driver keeps the
+shared display mutex and chip-select transaction from start through bounded
+wait/recovery, so bootlog cannot reconfigure the shared DMA/PIO state during an
+active transfer. The synchronous API is implemented through the same paired
+operations, while the existing 40-row presentation remains the default.
+
+Normal and profiled 448x280 Release builds succeed with unchanged linker
+endpoints (`0x200492e8` and `0x20049750`). Profiling counts residual wait plus
+command/submission as blocking display time; DMA hidden behind packing is not
+double-counted. The next gate is a short physical correctness/audio check,
+because the earlier eight-row experiment proved that build success cannot
+establish panel behavior. No performance improvement is claimed yet.
+
+The short physical gate then passed. The profiled 448x280 candidate was flashed
+and byte-verified; Alexander confirmed a visible, normally updating Doom menu
+and good menu sound without the previously reported stretching. This accepts
+the 20-row transaction ordering, alternating-buffer lifetime, and interleaved
+audio service for a bounded gameplay measurement. It does not yet accept the
+pipeline as faster; that decision requires the comparable one-minute report.
+
+The comparable report is now complete and checksum-valid. It captured 2,024
+frames over 60,011,526us, or 33.7 FPS. Average/max cadence was
+29,664/46,151us; core1 work 4,097/16,145us; frame wait 1,593/3,743us; and
+presentation 23,940/29,114us. CPU preparation averaged 22,404us, while the new
+blocking display-service measure averaged 1,535us and peaked at 4,078us.
+Render last/max was 19,504/28,653us, display wait peaked at 9us, and no DMA
+timeout occurred.
+
+Against the synchronous full-width baseline, average cadence improves by
+5,174us (14.9%) and presentation by 4,994us (17.3%). Blocking panel cost falls
+by 5,595us, meaning the two-buffer pipeline hides about 78% of the old 7,130us
+transfer time. Static memory is unchanged. Accept the asynchronous presenter
+as the active full-width optimisation direction. Reaching a 35 FPS average now
+requires only about 1,093us more, so optimise the remaining CPU packing loop
+before changing the driver architecture again.
+
+The first post-pipeline CPU candidate targets duplicated vertical scale rows.
+At 448x280, 80 of 200 source rows produce two adjacent output rows. When the
+first copy does not close a 20-row tile, both are now written in one strided x
+loop, loading each scaled pixel once and sharing loop control. Tile-boundary
+cases retain the proven single-row path. This uses no additional buffer and an
+exact host simulation produces the same source-row sequence at 384x240,
+416x260, and 448x280. All synchronous/asynchronous normal/profile builds pass
+with unchanged static endpoints.
+
+To reduce Alexander's repeated testing burden, profile capture duration is now
+a positive-integer CMake setting used only by `i_video.c`. Intermediate builds
+can capture 20 seconds without rebuilding every engine source; the final
+accepted benchmark remains 60 seconds. The paired-row 448x280 asynchronous
+20-second candidate is build-complete but not yet hardware-validated, so no
+speed improvement is claimed.
+
+The 20-second hardware report is checksum-valid and clearly positive. It
+captured 727 frames over 20,008,747us, or 36.3 FPS. Average/max cadence was
+27,560/43,794us; core1 work 4,067/15,009us; frame wait 1,636/2,993us; and
+presentation 21,842/27,674us. CPU preparation averaged 20,404us and blocking
+display service 1,437us, with display wait at most 9us and zero DMA timeouts.
+
+Compared with the one-minute 33.7 FPS pipeline baseline, cadence falls by
+2,104us and CPU preparation by 2,000us while display service changes by only
+98us. This isolates the gain to the paired-row CPU work rather than a transfer
+timing accident. Accept the optimisation directionally because it clears the
+35 FPS target without memory cost. Require one final 60-second representative
+combat capture before treating full-width video performance as locked.
+
+The final one-minute report is checksum-valid and meets the gate. It captured
+2,110 frames over 60,004,468us, or 35.2 FPS. Average/max cadence was
+28,451/46,503us; core1 work 4,596/18,042us; frame wait 1,603/3,768us; and
+presentation 22,226/27,049us. CPU preparation averaged 20,709us, blocking
+display service 1,516us and peaked at 3,843us, display wait peaked at 11us,
+and no DMA timeout occurred.
+
+Compared with the original 28.7 FPS synchronous full-width baseline, cadence
+improves by 6,387us (18.3%) and presentation by 6,708us (23.2%). The normal
+full-width image still ends at `0x200492e8`, leaving 224,536 zone bytes. Lock
+the two-buffer asynchronous presenter plus paired-row packing as the video
+baseline; a wholesale driver rewrite is no longer justified. The normal
+non-profile image was flashed and byte-verified after measurement so ordinary
+play no longer enters the flight recorder.
+
 ## Open questions
-- **Freeze during active combat** — not ordinary zone OOM and not cured by
-  removing silent audio work or bounding display DMA waits. Hardware-test the
-  pixel-exact build next; if it still freezes, add persistent stage/heartbeat
-  diagnostics around multicore rendezvous, rendering, and game-tic processing.
+- **Earlier freeze during active combat** — not ordinary zone OOM and not cured
+  by removing silent audio work or bounding display DMA waits, but it did not
+  recur in the latest run through E1M1 into E1M2. Repeat that route before
+  either closing it or adding persistent stage/heartbeat diagnostics.
 - Continue extended combat testing of the hardware-verified DMA/IRQ SFX path.
 - Optional: improve the fixed-memory MUSX synthesizer's timbre before
   reconsidering music as the device default.
 - What actually drives title-screen advancement in a `PD_COLUMNS` build,
   since vanilla's `D_PageTicker` path is compiled out (see above).
-- Letterbox padding noise (cosmetic, see above) - needs a single-
-  transfer-based panel clear, not `AMOLED_1IN8_Clear()` as-is.
-- Does flash-safe BOOT polling affect frame pacing or combat stability, and
-  should short BOOT be assigned to weapon switching?
-- Which selectable motion model is best on this device: full tilt, tilt steering
-  plus touch movement, or touch steering plus tilt movement?
+- How much can cache-local packing and a smaller transpose tile reduce the
+  measured 11,664us CPU preparation cost, and what does the equivalent
+  448x280 combat capture then sustain?
+- Does optional roll strafing improve the same short combat route versus
+  touch-only navigation without introducing accidental movement or fatigue?
 - Can proportional QMI8658 input feed `ticcmd_t` directly without affecting
   deterministic tic behavior or shared-I2C latency?
 - Exact AXP2101 long-press duration threshold - observed to work, exact
