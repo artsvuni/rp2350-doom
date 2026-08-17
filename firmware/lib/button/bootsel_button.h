@@ -4,7 +4,8 @@
 #include <stdbool.h>
 
 /* Reads the physical BOOTSEL button while the firmware is running.
-   Safe to call repeatedly from a polling loop; not interrupt-safe. */
+   Safe to poll in single-core firmware. Multicore callers must first ensure
+   the other core cannot execute or read data from flash. */
 bool bootsel_button_pressed(void);
 
 #endif

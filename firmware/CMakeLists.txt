@@ -7,6 +7,12 @@ project(doom_firmware C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+# The fixed-memory MUSX synthesizer works on hardware, but its deliberately
+# simple chiptune timbre is not a good default for this board's tiny speaker.
+# Keep the implementation available for experiments without charging the
+# normal SFX-only build its code, static state, or continuous mixer cost.
+option(DOOM_ENABLE_MUSIC "Enable experimental MUSX music synthesis" OFF)
+
 pico_sdk_init()
 
 add_executable(doom_firmware)
@@ -66,6 +72,13 @@ add_executable(doom)
 file(GLOB DOOM_ENGINE_ROOT_SOURCES ${CMAKE_CURRENT_LIST_DIR}/engine/*.c)
 file(GLOB DOOM_GAME_SOURCES ${CMAKE_CURRENT_LIST_DIR}/engine/doom/*.c)
 file(GLOB DOOM_PICO_SOURCES ${CMAKE_CURRENT_LIST_DIR}/engine/pico/*.c)
+
+# These files are referenced only by the optional embedded music backend.
+# Excluding them from the default build also drops the static MUSX iterator,
+# recovering its zone-adjacent SRAM rather than merely compiling a no-op UI.
+if(NOT DOOM_ENABLE_MUSIC)
+    list(FILTER DOOM_ENGINE_ROOT_SOURCES EXCLUDE REGEX "/(midifile|musx_decoder|mus2mid)\\.c$")
+endif()
 
 target_sources(doom PRIVATE
     ${DOOM_ENGINE_ROOT_SOURCES}
@@ -257,9 +270,15 @@ target_compile_definitions(doom PRIVATE
     # firmware size instead of upstream's tight 0x10048000.
     TINY_WAD_ADDR=0x10200000
 
-    # Sound effects and the fixed-memory MUSX music synthesizer share the
-    # non-blocking DMA/IRQ audio_pio queue.
+    # Sound effects use the non-blocking DMA/IRQ audio_pio queue. Optional
+    # music, when enabled below, mixes through that same bounded queue.
 )
+
+if(DOOM_ENABLE_MUSIC)
+    target_compile_definitions(doom PRIVATE DOOM_ENABLE_MUSIC=1)
+else()
+    target_compile_definitions(doom PRIVATE DEBUG_NO_MUSIC=1)
+endif()
 # Deliberately NOT set (unlike upstream's RP2040-cramped build):
 # PICO_TIME_DEFAULT_ALARM_POOL_DISABLED / _MAX_TIMERS, PICO_DISABLE_SHARED_IRQ_HANDLERS,
 # PICO_USE_OPTIMISTIC_SBRK, PICO_USE_SW_SPIN_LOCKS=0, PICO_USE_STACK_GUARDS=0 - these

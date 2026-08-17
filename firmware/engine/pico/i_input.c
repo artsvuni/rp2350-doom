@@ -528,15 +528,10 @@ static void pico_quit(void) {
 // keyup pulses spanning one tic - see PulseKey() below for why it takes two
 // calls (one tic) to do that rather than posting both events at once.
 //
-// BOOT is deliberately NOT wired here yet: reading it floats the flash
-// QSPI CS pin (see lib/button/bootsel_button.c), which only worked safely
-// in the single-core calibration firmware. This target runs pd_render.cpp
-// on core1, which reads WAD data (and executes code) directly from flash
-// via XIP continuously - floating CS from core0 while core1 is mid-flash-
-// access would corrupt or hang that read, with no cross-core guard in
-// place yet. Needs a real synchronization point with core1 before it's
-// safe to add, not just a straight port of the calibration firmware's
-// version.
+// BOOT is deliberately not read during gameplay. It shares the external
+// flash QSPI CS signal, and both hardware incidents occurred only in builds
+// that sampled it at runtime. Keep it exclusively for entering BOOTSEL while
+// powering/resetting the board.
 //
 // Control model selector. The original model uses four fixed invisible hold
 // zones (preserved below for instant fallback). The experimental model is a

@@ -8,8 +8,9 @@
  * RAM (no flash access is possible while CS is floated) and with
  * interrupts disabled (an interrupt handler living in flash would hang
  * the chip). Adapted from the standard technique used by e.g.
- * earlephilhower/arduino-pico's Bootsel.cpp, simplified for single-core
- * firmware (no cross-core coordination needed here).
+ * earlephilhower/arduino-pico's Bootsel.cpp. This low-level driver handles
+ * only the calling core; multicore callers must pause the other core before
+ * entering it (the Doom input path uses Pico SDK multicore lockout).
  */
 #include "bootsel_button.h"
 #include "hardware/sync.h"

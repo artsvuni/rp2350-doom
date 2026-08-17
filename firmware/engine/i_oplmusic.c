@@ -18,6 +18,57 @@
 
 #include "doomtype.h"
 #include "i_sound.h"
+
+#if PICO_ON_DEVICE && DEBUG_NO_MUSIC
+
+// Effects-only is the hardware default. Keep a tiny interface-compatible
+// module so the complete experimental backend below remains one CMake switch
+// away without reserving its voices and MUSX decoder state in normal builds.
+uint8_t restart_song_state;
+
+static const snddevice_t music_disabled_devices[] = { SNDDEVICE_ADLIB };
+
+static boolean Disabled_Init(void) { return false; }
+static void Disabled_Shutdown(void) {}
+static void Disabled_SetVolume(int volume) { (void)volume; }
+static void Disabled_Pause(void) {}
+static void Disabled_Resume(void) {}
+static void *Disabled_Register(should_be_const void *data, int len)
+{
+    (void)data;
+    (void)len;
+    return NULL;
+}
+static void Disabled_UnRegister(void *handle) { (void)handle; }
+static void Disabled_Play(void *handle, boolean looping)
+{
+    (void)handle;
+    (void)looping;
+}
+static void Disabled_Stop(void) {}
+static boolean Disabled_IsPlaying(void) { return false; }
+
+void I_SetOPLDriverVer(opl_driver_ver_t ver) { (void)ver; }
+
+const music_module_t music_opl_module =
+{
+    music_disabled_devices,
+    arrlen(music_disabled_devices),
+    Disabled_Init,
+    Disabled_Shutdown,
+    Disabled_SetVolume,
+    Disabled_Pause,
+    Disabled_Resume,
+    Disabled_Register,
+    Disabled_UnRegister,
+    Disabled_Play,
+    Disabled_Stop,
+    Disabled_IsPlaying,
+    NULL,
+};
+
+#else
+
 #include "midifile.h"
 #include "pico/i_picosound.h"
 #include "pico/mutex.h"
@@ -498,3 +549,5 @@ const music_module_t music_opl_module =
     I_LiteMusic_IsPlaying,
     NULL,
 };
+
+#endif

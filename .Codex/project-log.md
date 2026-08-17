@@ -1,6 +1,83 @@
 # Project Log
 
+## 2026-08-17
+
+### 08:03 — Prepare the safe milestone for GitHub
+
+- Updated README and current project context to describe effects-only audio, the optional music backend, current memory figures, and removal of runtime BOOT input.
+- Corrected the macOS flash command to suppress extended attributes and documented the safe pre-BOOT rollback as the published state.
+- Reviewed the nine unpublished local commits for squashing into one coherent milestone before pushing `main`.
+- Commit: included in the squashed playable-audio-and-controls milestone.
+
+### 00:55 — Defer BOOT research and close on the safe firmware
+
+- Documented that Raspberry Pi officially supports BOOTSEL runtime input, but found no exact-board Waveshare example and identified Doom's dual-core XIP workload as the important difference.
+- Deferred any revisit to a standalone single-core, amplifier-disabled `flash_safe_execute()` experiment.
+- Recorded the byte-identical safe UF2 hash and refreshed the session handoff; README remained unchanged.
+- Commit: included in this BOOT-research documentation commit.
+
+### 00:51 — Remove runtime BOOT input permanently
+
+- Confirmed the pre-BOOT-polling effects-only build restored normal hardware behavior, while a minimal single-press BOOT variant again behaved abnormally.
+- Removed BOOT sampling, Escape injection, and core1 lockout registration from the game firmware.
+- Reserved BOOT exclusively for ROM BOOTSEL entry and moved Escape replacement back to the PWR/touch design backlog.
+- Kept README unchanged under the publication-only documentation policy.
+- Commit: included in this runtime-BOOT rollback commit.
+
+### 00:36 — Simplify BOOT Escape to one press
+
+- Replaced the 1.2-second BOOT hold with a two-sample-debounced press edge that emits one Escape pulse and never repeats while held.
+- Recorded that this still uses runtime flash-CS sampling and does not eliminate that mechanism's risk.
+- Paused deployment after the battery-free board emitted abnormal loud audio and a burning smell; physical inspection is required before it is powered again.
+- Kept README unchanged under the publication-only documentation policy.
+- Commit: included in this BOOT single-press control commit.
+
+### 00:23 — Plan tilt controls and a measured performance refactor
+
+- Confirmed the onboard QMI8658 makes calibrated accelerometer/gyro control feasible and reviewed comparative mobile-game input research.
+- Preserved floating swipe-and-hold as Control Model A; planned full-tilt, hybrid tilt-plus-touch, and gyro-assisted variants with recentering and fixed-memory filtering.
+- Planned instrumentation-first optimization followed by small, hardware-testable subsystem refactors with measured SRAM and timing deltas.
+- Kept README unchanged under the publication-only documentation policy.
+- Commit: included in this controls-and-refactor planning commit.
+
+### 00:10 — Make README updates publication-oriented
+
+- Recorded that routine local commits must not update README.
+- Reserved README changes for major milestones or the final cleanup before an explicitly requested GitHub push.
+- Kept granular local history in Scribe's project log/context/TODO and decision documents instead.
+- Commit: included in this documentation-workflow commit.
+
+### 00:04 — Map BOOT long-press to Escape safely
+
+- Registered render core 1 with the Pico SDK's RAM-resident multicore lockout before allowing gameplay input.
+- Sampled flash-CS-based BOOT at no more than 20Hz with a 2ms lockout timeout, then emitted one Escape pulse after a continuous 1.2-second hold.
+- Updated controls, architecture notes, memory figures, project context, and follow-up hardware-test TODOs.
+- Verified effects-only and optional-music builds; the final effects-only UF2 leaves 234,556 bytes in the short-pointer zone.
+- Commit: included in this BOOT/Escape input commit.
+
 ## 2026-08-16
+
+### 23:59 — Publish a complete project README locally
+
+- Replaced the minimal README with a goal-first GitHub landing page following the Scribe documentation contract.
+- Documented hardware-tested features and controls, WAD preparation, build/flash steps, architecture, memory constraints, repository structure, project history, limitations, and credits.
+- Recorded the successful effects-only hardware check while keeping long-duration combat stability open.
+- Commit: included in this README documentation commit.
+
+### 23:51 — Record local-first Git workflow
+
+- Added a permanent repository rule encouraging frequent recoverable local commits.
+- Required explicit permission for every remote push and clarified that building or flashing does not imply pushing.
+- Set squashing unpublished commits into one coherent milestone as the default pre-push workflow while protecting already-pushed history.
+- Commit: included in this workflow-policy commit.
+
+### 23:55 — Default to effects-only audio
+
+- Confirmed on hardware that the shareware music data and fixed-memory MUSX playback path work end to end.
+- Recorded that the lightweight synthesized timbre is not enjoyable through this device's small speaker.
+- Kept the complete music backend behind `DOOM_ENABLE_MUSIC`, while making the normal build effects-only and excluding its music parser sources.
+- Verified both configurations build; the final effects-only UF2 leaves 234,776 bytes in the short-pointer zone.
+- Commit: included in this effects-only-default commit.
 
 ### 23:48 — Add fixed-memory MUSX music experiment
 

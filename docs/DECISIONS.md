@@ -993,27 +993,194 @@ the short-pointer zone through `0x20080000`. This is 2,416 bytes less zone than
 the hardware-proven SFX-only build. Hardware confirmation of boot, recognizable
 music, SFX/music balance, frame pacing, and combat stability is still required.
 
+## 2026-08-16 (cont'd) — Music works; default to effects only
+
+Hardware testing confirmed the complete music path works: the WAD music is
+present, MUSX decoding succeeds, menu/level playback starts, and synthesized
+music reaches the ES8311 speaker alongside sound effects. The missing-music
+question is therefore resolved.
+
+The nine-voice integer synthesizer is intentionally lightweight, however, and
+its chiptune approximation is not enjoyable through this device's small
+speaker. Sound effects alone fit the hardware better. Music is now an optional
+experiment rather than the product default: the full implementation remains
+in `i_oplmusic.c`, while CMake's `DOOM_ENABLE_MUSIC` option defaults to `OFF`.
+It can be restored without code changes using:
+
+```
+cmake -S firmware -B firmware/build -DDOOM_ENABLE_MUSIC=ON
+```
+
+The default build defines `DEBUG_NO_MUSIC=1` and excludes the MUSX/MIDI parser
+sources, avoiding active voices, continuous mixing, and music-specific parser
+state. Both modes build successfully. The final effects-only build has
+`__end__=0x20046ae8`, leaving 234,776 bytes in the short-pointer zone through
+`0x20080000`; the optional music build remains at 233,448 bytes. Improving the
+synthesizer timbre can be revisited later without risking the stable SFX path.
+
+## 2026-08-17 — Map BOOT long-press to Escape with flash-safe lockout
+
+BOOT is the natural remaining Escape/menu input, but it is not an ordinary
+GPIO: pressing it pulls the external flash CS line low. The existing reader
+temporarily floats CS and executes from RAM with local interrupts disabled,
+which was safe only in the original single-core calibration firmware. Doom's
+render core continuously executes code and reads WAD data through XIP, so
+calling that reader directly from core0 could corrupt a fetch or hang core1.
+
+The game now registers core1 with the Pico SDK's multicore lockout before
+announcing that core as ready. The SDK's FIFO IRQ moves core1 into a
+RAM-resident loop with interrupts disabled. Core0 requests that lockout with a
+2ms timeout, samples BOOT only after acknowledgement, restores flash CS, and
+then releases core1. If core1 cannot acknowledge promptly the sample is
+skipped, not blocked, so the new input cannot introduce an unbounded wait.
+No other game code uses the inter-core FIFO.
+
+BOOT is sampled at no more than 20Hz to minimize render interruptions. A
+continuous 1.2-second hold emits one `KEY_ESCAPE` key pulse; continued holding
+does not repeat, and short presses remain unassigned for a possible weapon
+switch. The effects-only build succeeds with `__end__=0x20046bc4`, leaving
+234,556 bytes in the short-pointer zone. The optional-music configuration also
+builds and leaves 233,240 bytes. Hardware validation of menu activation,
+release/repeat behavior, frame pacing, and combat stability remains required.
+
+## 2026-08-17 — Research: BOOT input is valid generally, deferred for Doom
+
+Follow-up research found that using BOOTSEL as runtime input is an officially
+supported Raspberry Pi technique, not inherently an invalid modification. The
+official `pico-examples` repository includes a `button` example that temporarily
+suspends flash access, and the SDK provides `flash_safe_execute()` plus
+`flash_safe_execute_core_init()` for coordinated multicore flash safety:
+
+- https://github.com/raspberrypi/pico-examples
+- https://github.com/raspberrypi/pico-sdk/releases
+- https://github.com/raspberrypi/pico-sdk/issues/2243
+
+No official Waveshare example was found that remaps BOOT during runtime on this
+exact RP2350-Touch-AMOLED-1.8 board; its documentation uses BOOT only to enter
+the ROM loader:
+
+- https://www.waveshare.com/wiki/RP2350-Touch-AMOLED-1.8
+
+The likely distinction is workload. The official button example is small,
+whereas Doom executes and streams WAD data from external flash across two cores
+while display/audio DMA and interrupts remain active. Our implementation did
+lock out core1, but both BOOT-enabled hardware trials behaved abnormally and
+the otherwise equivalent pre-BOOT build did not. This correlation is strong,
+but the precise failure mechanism and the burning odor remain unproven.
+
+Decision: this is not a current priority. Runtime BOOT remains absent from the
+playable firmware. If revisited later, first build a standalone single-core,
+audio/amplifier-disabled test using the SDK's higher-level flash-safety API,
+then expand one subsystem at a time. Do not experiment inside Doom first.
+
+## 2026-08-17 — Abandon runtime BOOT input and restore the safe baseline
+
+The pre-BOOT-polling effects-only firmware was restored and ran normally. A
+second controlled build based on that same safe source plus only debounced
+single-press BOOT/Escape handling again behaved abnormally. At Alexander's
+request, runtime BOOT input is now abandoned rather than tuned further.
+
+Removed the BOOT reader from the Doom target, the 20Hz polling and Escape pulse,
+and core1's multicore-lockout victim registration. BOOT is reserved exclusively
+for entering the ROM BOOTSEL loader during power-on/reset. The exact cause of
+the abnormal sound/odor is still not proven, but runtime flash-CS manipulation
+is the common change and is not worth retaining for one game action. Escape
+must move to a PWR or touch gesture.
+
+## 2026-08-17 — Simplify BOOT Escape to one press; deployment paused
+
+The first hardware boot of the long-press Escape build produced abnormal loud
+audio and a burning smell. The board had no battery, was disconnected
+immediately, and must remain unpowered until the speaker/NS4150B amplifier,
+regulator, USB-power area, and board surfaces are inspected. There is no proven
+causal link to BOOT polling: that commit did not change the audio configuration
+or amplifier control, and the deployed build had music disabled. Nevertheless,
+no more deployments are appropriate before physical inspection.
+
+At Alexander's request, the gesture itself is simplified locally from a
+1.2-second hold to one press. BOOT remains sampled at 20Hz using the same bounded
+multicore flash-CS lockout. Two consecutive pressed samples debounce the input;
+the first stable pressed edge emits one `KEY_ESCAPE`, continued holding does not
+repeat, and release rearms it. This is a gesture change only: a single press
+still requires runtime BOOT/flash-CS sampling and therefore does not remove that
+mechanism or its technical risk.
+
+## 2026-08-17 — Plan selectable tilt controls and a measured refactor
+
+The earlier decision against tilt as the primary control is softened, not
+silently discarded. This board includes a QMI8658 six-axis IMU, so motion
+control is technically inexpensive enough to prototype. Research comparing
+mobile-game input found touch produced better objective performance in one
+game while tilt was perceived as more engaging, and another shooter study
+found that tilt can usefully supplement touch. A separate order-of-control
+study found that mapping matters at least as much as the input device: direct
+position control substantially outperformed velocity control in its task.
+Sources:
+
+- https://www.yorku.ca/mack/mhci2013h.html
+- https://doi.org/10.1016/j.entcom.2017.04.005
+- https://www.yorku.ca/mack/ie2014.html
+- https://developer.android.com/develop/sensors-and-location/sensors/sensors_motion
+- https://www.waveshare.com/wiki/RP2350-Touch-AMOLED-1.8
+
+The current floating swipe-and-hold scheme is preserved as **Control Model A**:
+the initial touch is a movable anchor, a 24-pixel drag selects one cardinal
+direction with an 8-pixel dominant-axis bias, holding sustains that digital
+direction, PWR fires/selects (double press uses/backs out), and a 1.2-second
+BOOT hold emits Escape. The original fixed-zone scheme remains a compile-time
+fallback. This is the working baseline against which experiments are judged.
+
+Planned experiments, behind a small selectable input-model boundary:
+
+1. **Model B — full tilt.** Average a stationary 0.5-1.0 second window to set
+   the player's neutral pose. Pitch controls forward/back and roll controls
+   left/right turning. Use a dead zone plus hysteresis and a nonlinear response.
+2. **Model C — hybrid (preferred first experiment).** Let tilt steer left/right
+   while touch swipe-and-hold controls forward/back. This avoids asking the
+   same hand motion to steer, keep the screen readable, and operate touch on
+   both axes simultaneously.
+3. **Model D — gyro-assisted hybrid.** Use accelerometer gravity for the stable
+   neutral/low-frequency attitude and gyro rate for responsive turning, with an
+   explicit recenter action. This is more capable but adds drift/filter tuning.
+
+Vanilla key events are binary, so angle-dependent speed should eventually feed
+bounded values directly into `ticcmd_t.forwardmove` and `ticcmd_t.angleturn`.
+The lower-risk first prototype can use two thresholds (walk and run/fast turn)
+before that engine integration. Poll on the existing core0 input path at about
+35-50Hz, use one burst read, fixed-point filtering, and static state only. I2C1
+is shared with touch, audio codec, RTC, and power management, so IMU access must
+remain serialized and bounded. Do not import Waveshare's driver unchanged: its
+register-write retry return logic is known broken in the supplied bundle.
+
+The proposed performance work will be a measured phased refactor, not a broad
+rewrite while the combat freeze is still unidentified. First record zone
+headroom, stack high-water marks, game/render timing, DMA waits, and audio queue
+pressure. Then isolate display presentation, input models, audio, and diagnostics
+behind behavior-preserving interfaces. Make one static-buffer/dead-code/data-flow
+change at a time and hardware-test it, recording SRAM and frame-time deltas. This
+keeps regressions bisectable and avoids mistaking code movement for optimization.
+
 ## Open questions
 - **Freeze during active combat** — not ordinary zone OOM and not cured by
   removing silent audio work or bounding display DMA waits. Hardware-test the
   pixel-exact build next; if it still freezes, add persistent stage/heartbeat
   diagnostics around multicore rendezvous, rendering, and game-tic processing.
 - Continue extended combat testing of the hardware-verified DMA/IRQ SFX path.
-- Hardware-test the fixed-memory MUSX synthesizer: boot/menu/level transitions,
-  recognizable score, SFX balance, frame pacing, and sustained combat.
-- Touch/PWR input not being detected at all (see above) - next thing to
-  debug.
+- Optional: improve the fixed-memory MUSX synthesizer's timbre before
+  reconsidering music as the device default.
 - What actually drives title-screen advancement in a `PD_COLUMNS` build,
   since vanilla's `D_PageTicker` path is compiled out (see above).
 - Letterbox padding noise (cosmetic, see above) - needs a single-
   transfer-based panel clear, not `AMOLED_1IN8_Clear()` as-is.
-- BOOT long-press conflict (bootloader-entry vs in-game menu) - not yet
-  resolved, see above.
+- Does flash-safe BOOT polling affect frame pacing or combat stability, and
+  should short BOOT be assigned to weapon switching?
+- Which selectable motion model is best on this device: full tilt, tilt steering
+  plus touch movement, or touch steering plus tilt movement?
+- Can proportional QMI8658 input feed `ticcmd_t` directly without affecting
+  deterministic tic behavior or shared-I2C latency?
 - Exact AXP2101 long-press duration threshold - observed to work, exact
   timing not measured or found in a quick datasheet pass. Not blocking;
   revisit only if it turns out to feel wrong in actual play.
-- Button/touch control wiring into the actual game - not started; boot/
-  render bring-up has been the entire focus so far.
 - WHD_SUPER_TINY/DEMO1_ONLY choice (see fix #5 above) was made for
   shareware's sake; swapping in Alexander's own multi-episode retail WAD
   later will need `whd_gen` and these defines revisited together.

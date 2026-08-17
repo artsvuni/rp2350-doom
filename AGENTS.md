@@ -25,3 +25,20 @@ redo the work.
 Flashing/testing requires physical access to the board (BOOTSEL mode,
 photographing the AMOLED screen) - if you can't do that, say so rather
 than guessing at hardware behavior.
+
+## Git workflow
+
+- Make frequent local commits after meaningful file changes so experiments
+  and working milestones are easy to recover.
+- Never push to GitHub or another remote unless Alexander explicitly asks for
+  a push. A request to build or flash the device is not permission to push.
+- Before a requested push, inspect every commit ahead of `origin/main` and
+  report them. By default, squash the unpublished work into one coherent
+  milestone commit unless Alexander asks to preserve separate commits.
+- Never rewrite commits that have already been pushed unless Alexander
+  explicitly requests a history rewrite and acknowledges the force-push risk.
+- Treat `README.md` as publication-level documentation, not a per-commit log.
+  Update it only for a genuinely major milestone or during the final cleanup
+  immediately before a requested GitHub push. Record routine local changes in
+  `.Codex/project-log.md`, project context, TODOs, and technical decision docs
+  instead.
