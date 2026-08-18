@@ -17,13 +17,12 @@
 #include "hardware/gpio.h"
 #include "hardware/structs/ioqspi.h"
 #include "hardware/structs/sio.h"
+#include "pico/flash.h"
 #include "pico/platform.h"
 
-static bool __no_inline_not_in_flash_func(read_bootsel_raw)(void)
+static void __no_inline_not_in_flash_func(read_bootsel_raw)(void *pressed_out)
 {
     const uint CS_PIN_INDEX = 1;
-
-    uint32_t flags = save_and_disable_interrupts();
 
     hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
                      GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
@@ -31,17 +30,29 @@ static bool __no_inline_not_in_flash_func(read_bootsel_raw)(void)
 
     for (volatile int i = 0; i < 1000; i++) {}
 
-    bool pressed = !(sio_hw->gpio_hi_in & SIO_GPIO_HI_IN_QSPI_CSN_BITS);
+    *(bool *)pressed_out =
+        !(sio_hw->gpio_hi_in & SIO_GPIO_HI_IN_QSPI_CSN_BITS);
 
     hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
                      GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
                      IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
-
-    restore_interrupts(flags);
-    return pressed;
 }
 
 bool bootsel_button_pressed(void)
 {
-    return read_bootsel_raw();
+    bool pressed = false;
+    uint32_t flags = save_and_disable_interrupts();
+    read_bootsel_raw(&pressed);
+    restore_interrupts(flags);
+    return pressed;
+}
+
+int bootsel_button_pressed_flash_safe(bool *pressed, uint32_t timeout_ms)
+{
+    if (pressed == NULL) {
+        return PICO_ERROR_INVALID_ARG;
+    }
+
+    *pressed = false;
+    return flash_safe_execute(read_bootsel_raw, pressed, timeout_ms);
 }

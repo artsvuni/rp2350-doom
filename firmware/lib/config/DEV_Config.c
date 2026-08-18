@@ -135,7 +135,11 @@ void DEV_GPIO_Init(void)
 {
     gpio_init(PA_CTRL);
     gpio_set_dir(PA_CTRL, GPIO_OUT);
+#if DOOM_BOOT_GATE_AUDIO_DISABLED
+    gpio_put(PA_CTRL, 0);
+#else
     gpio_put(PA_CTRL, 1);
+#endif
 
     gpio_init(Touch_RST_PIN);
     gpio_set_dir(Touch_RST_PIN, GPIO_OUT);

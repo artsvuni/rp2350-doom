@@ -23,7 +23,14 @@ enum audio_buffer_state {
 };
 
 static uint32_t audio_buffers[AUDIO_DMA_BUFFER_COUNT][AUDIO_DMA_SAMPLES_PER_BUFFER];
+#if DOOM_BOOT_FLASH_SAFE_DMA
+// BOOT audit requirement: no DMA-visible source may live in XIP flash while
+// BOOT temporarily floats flash CS. This consumes 2 KiB of SRAM only in
+// explicitly BOOT-enabled candidates; option-off F14.1 remains byte-identical.
+static uint32_t silence_buffer[AUDIO_DMA_SAMPLES_PER_BUFFER];
+#else
 static const uint32_t silence_buffer[AUDIO_DMA_SAMPLES_PER_BUFFER];
+#endif
 static uint8_t buffer_state[AUDIO_DMA_BUFFER_COUNT];
 static uint8_t queued_buffers[AUDIO_DMA_BUFFER_COUNT];
 static uint8_t queue_head;

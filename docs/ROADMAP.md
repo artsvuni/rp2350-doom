@@ -40,8 +40,9 @@ audio, and enough memory to progress through real levels.
   `58aef7f97a624a378cd3a6edd0ba47377852113c1351f16ff25dae90b152cb43`.
 - Floating swipe-and-hold movement is playable, but not yet enjoyable enough
   for sustained combat.
-- Runtime BOOT polling is forbidden in the playable firmware. BOOT remains a
-  ROM-loader/recovery control only.
+- At this 17 August baseline runtime BOOT remained forbidden. The later F15
+  milestone admitted one release-only next-weapon action after three staged
+  hardware gates and elimination of the flash-backed audio-DMA source.
 
 ## Order of work
 
@@ -370,10 +371,13 @@ Judge each model on the same route and score:
 
 The hybrid intentionally changes the action mapping as part of the UX
 experiment: a PWR tap fires immediately and touchscreen double-tap owns
-Use/Open. PWR hold is not a gameplay input because the PMIC turns it into a
-long-press event and eventually a physical reset/power action. Escape/menu
-remains unresolved. Menus retain their existing swipe navigation and
-short/double PWR semantics. Runtime BOOT input must not return.
+Use/Open. F12 cautiously revisits PWR hold with a 450ms software timer, one-shot
+fire, and suppression through release, well before the PMIC's documented
+1–2.5-second long IRQ and 4–10-second power-off ranges. A continued physical
+hold can still power off the board. Menus retain their existing swipe
+navigation and short/double PWR semantics, while the same 450ms hold acts as
+Escape/Back without emitting Fire. Runtime BOOT input remains excluded pending
+a separate safety investigation.
 
 ### Phase 3 implementation checkpoint — 17 August 2026
 
@@ -458,6 +462,129 @@ required, and changing grip before touch could arm an immediate move. Enabling
 roll continuously would restore the earlier drift. F11 therefore uses a no-IMU
 build, uses explicit bottom-corner double-tap dodge bursts, and makes the
 forward/back ramp calmer through the middle while preserving F9 turning.
+
+F12 leaves F11 navigation unchanged and tests the remaining Escape action. It
+fires once on the immediate PWR press edge, opens Escape once after a 450ms
+continuous hold, then discards PWR events through release so the release cannot
+select a menu item. The build adds eight static bytes and leaves 224,492 bytes
+of short-pointer headroom. Hardware validation is pending.
+
+The in-level F12 interaction passed, but press-time Fire necessarily occurred
+before every hold. F12.1 resolves the gesture on release: a short release emits
+Fire in gameplay or Enter/Select in menus; reaching 450ms emits Escape/Back and
+suppresses release. The hybrid PWR double-click path is bypassed because hold
+now owns Back.
+
+F12.1 felt very comfortable on hardware, but adjacent rapid taps could merge
+into one continuously sampled Fire state. F12.2 adds a four-pulse fixed queue
+and inserts one explicit released tic between queued shots. It preserves the
+first release's latency and the 450ms Escape/Back hold.
+
+F12.2's physical test still lost Alexander's fastest click-click. F12.3 handles
+the additional PMIC ordering case: if the release of an active tap and the next
+press arrive in one latched status mask, complete the first tap and preserve the
+second press rather than clearing both. This remains a bounded polling design;
+two complete clicks entirely between Doom tics cannot be counted by the
+AXP2101's occurrence flags and do not justify high-rate shared-I2C IRQ work.
+
+F12.3 did not materially change the pistol test. Doom's 14-tic pistol recovery
+explains the middle-speed loss: a one-tic Fire pulse during recoil expires
+before `A_ReFire` checks input. Keep vanilla cadence and avoid invisible
+delayed-shot buffering. F13 instead compares navigation models: a default-off
+fixed 160x160 bottom-left eight-way D-pad with a 12px neutral centre and
+normal/fast radial response, while preserving the accepted pointing-finger
+build unchanged.
+
+F13's first physical comparison selected its interaction direction: fixed
+touch-and-hold feels more traditional, controllable, and thumb-friendly than
+the relative mapping. F14 now tests Alexander's asymmetric edge-based layout:
+narrow LEFT and DOWN targets anchored to tactile panel edges, larger UP and
+RIGHT targets, no inter-zone dead zones, release-to-stop, and only two narrow
+forward-turn transition bands. A compile-time boundary-only overlay makes the
+actual mapping visible during calibration without allocating another buffer.
+The physical result was the best control experience so far: cardinal zones,
+release-to-stop, thumb use, and both forward diagonals passed, while the guides
+made the mapping easier to use. Keep the overlay during longer testing and
+design its permanent treatment only after the interactions are locked.
+
+F14.1 restores the one missing action by allowing a bounded stationary double
+tap inside any control zone to emit Use/Open. It preserves immediate movement,
+so the door gesture produces two tiny direction pulses instead of delaying all
+normal touch holds. Hardware-confirm this compromise, then treat F14 as the
+navigation baseline and proceed to the BOOT safety audit/weapon-cycle phase.
+
+The subsequent BOOT investigation completed. The exact schematic and SDK audit
+found the earlier missed hazard: empty-queue audio DMA read a `const` silence
+buffer from XIP while BOOT temporarily floated flash CS. The new path moves all
+active DMA sources to SRAM, uses SDK multicore flash coordination, and acts only
+after release in local level play. An isolated probe, silent Doom, and normal
+effects-enabled Doom all passed. F15 therefore maps one short BOOT release to
+native next-weapon cycling; hold/double/menu/network actions remain excluded.
+
+The next isolated control candidate is F15.1. It leaves the F15 binary exact
+when disabled and reuses the same 25 ms flash-safe sampler when enabled. A
+short release remains next weapon; after roughly 300 ms of physical hold, BOOT
+becomes a modifier that maps the F14 LEFT/RIGHT zones to sustained strafe and
+the forward transition bands to forward-strafe. Release restores turning and
+does not cycle weapon. The candidate is built and statically audited but must
+pass one bounded hardware hold test before it can replace F15.
+
+That test passed. Short release retained weapon cycling, held LEFT/RIGHT
+produced strafe, release restored turning, and Alexander reported the combined
+model worked great. Accept it as F16 and treat essential controls as closed.
+Future sensitivity work is refinement rather than a prerequisite for moving to
+the taller-display experiment.
+
+The first taller-display candidate is deliberately 448x320, not 448x336. It
+reduces the top and bottom bands from 44 to 24 pixels and adds 14.3% output
+pixels while keeping the proven two-buffer 20-row asynchronous transaction
+path unchanged. 448x336 would add 20% pixels but is not divisible by 20, so it
+also requires a partial final transfer or a newly validated tile size. The
+448x320 Release image builds with unchanged static memory and the same 220,176
+zone bytes as F16; its first gate is a short physical image, guide, audio, and
+in-level correctness check before any timed combat capture.
+
+That short gate passed. Alexander judged 448x320 excellent and visually much
+better, so the experiment advances to 448x336. This is the exact square-pixel
+equivalent of Doom's intended 4:3 CRT presentation: 320x200 content corrected
+to 320x240, then scaled 1.4x. The final 16 image rows are carried in the proven
+20-row transaction with four cleared border rows, avoiding the rejected 8-row
+path. The candidate adds no SRAM and awaits the same short physical gate before
+performance capture or any full-panel experiment.
+
+The 448x336 physical gate also passed. The image looked correct and good, and
+Alexander observed no loss of smoothness versus 448x320. Accept exact 4:3 as
+the preferred visual baseline while retaining 448x320 and measured 448x280 as
+rollback points. Because that smoothness judgment is qualitative, capture one
+bounded combat report before deciding whether display work is complete. Do not
+treat 448x368 as the automatic next scale: it exceeds the intended 4:3 image
+shape and needs a separate experience decision.
+
+Alexander made that separate experience decision in favour of testing game
+content across the complete panel rather than reserving the last 16-pixel
+bands for permanent port UI. F18 is the bounded 448x368 comparison: it stretches
+the accepted 4:3 frame by 9.5% vertically, preserves the existing two 20-row
+buffers, and assembles the final eight image rows into an overlapping full-size
+transaction using the preceding buffer. It adds no static memory and keeps
+220,176 zone bytes. The panel clear uses the same full-size-tail principle to
+test whether its old 8-row final stripe caused the photographed coloured edge
+remnant. F18 must pass a short physical correctness/feel gate before profiling
+or replacing 448x336.
+
+That gate passed decisively. Alexander loves the 448x368 result, described it
+as feeling really good, and selected it as the core experience. Accept F18
+despite its explicit 9.5% vertical stretch beyond exact 4:3; on this device the
+benefit of using the complete panel outweighs geometric purity. Preserve F17
+448x336 as the aspect-correct rollback and measured 448x280/35.2 FPS as the
+performance rollback. A bounded F18 capture is useful baseline documentation,
+but subjective acceptance is complete and measurement must not automatically
+restart optimisation.
+
+The optional capture is now complete: 2,059 frames in 60.021 seconds, or 34.3
+presented FPS, with 29,164/45,612us average/max cadence and zero DMA timeouts.
+That is only 2.5% slower in average cadence than the measured 448x280 rollback
+while emitting 31.4% more pixels. F18 remains the locked core presentation;
+there is no evidence-led reason to reopen the video pipeline now.
 
 ## Phase 4 — port-specific experience polish
 

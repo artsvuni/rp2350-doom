@@ -27,8 +27,15 @@ AMOLED, but proves the VGA-output default is forkable):
 ## Status: the game runs (2026-08-18)
 Doom1.wad's first level loads fully and is playable on hardware — title
 screen, menu navigation, level load, and in-game rendering all working.
-Touch uses a floating two-axis pointing-finger control and PWR fires/selects.
-The current presentation is full-width 448x280.
+Touch uses fixed asymmetric thumb zones and PWR fires/selects.
+F18 448x368 is installed and hardware-accepted as the core presentation;
+448x336 remains the exact-4:3 rollback and 448x280 the measured 35.2 FPS
+rollback. F18 deliberately stretches exact 4:3 by 9.5% vertically, reuses the
+existing two 20-row buffers for an overlapping final transaction, and adds no
+static SRAM. Alexander loves the full-panel result and observed no smoothness
+regression during its acceptance run. A later checksum-valid one-minute combat
+capture measured 34.3 presented FPS (2,059 frames in 60.021 seconds), only 2.5%
+slower in cadence than the 448x280/35.2 FPS rollback, with zero DMA timeouts.
 Got here by root-causing and fixing two serious bugs in the same session
 (a zone-memory-corruption freeze caused by a stray `calloc()` colliding
 with the DOOM_TINY zone allocator's manually-claimed RAM, and a genuine
@@ -77,15 +84,31 @@ the IMU out, maps bottom-corner double taps to short deterministic strafe
 bursts, keeps double-tap Use elsewhere, and changes forward/back to a gentler
 quadratic ramp reaching full run only after 140px. It is flashed and the
 strafe is a modest improvement, but detailed tuning is deferred.
-Runtime BOOT input was
-tried and removed after two abnormal hardware tests; BOOT is reserved for
-entering the ROM loader.
+F14 supersedes that relative navigation direction as the leading hardware
+candidate. It uses contiguous asymmetric thumb zones anchored to the left and
+bottom screen edges, with larger forward/right targets, narrow forward-turn
+transition bands, release-to-stop, and visible guide outlines. Alexander judged
+it the best control experience so far and found the guides useful. F14.1 keeps
+movement immediate while allowing the existing stationary double tap inside
+any control zone to emit Use/Open on the second release.
+F15 safely reintroduced one release-only BOOT action after an isolated probe,
+silent two-core Doom, and effects-enabled Doom all passed: a short release
+cycles to the next owned weapon in local play. A separate default-off F15.1
+candidate interprets a deliberate BOOT hold as a touch strafe modifier. Its
+hardware test passed and it is accepted/installed as F16. F15 remains the
+release-only rollback and F14.1 the no-runtime-BOOT rollback.
+F17 is the exact-4:3 rollback and its control routing remains part of F18. It
+fixes the state-routing bug that returned menus to legacy swipes and left
+intermission without an Attack/Use command, and keeps DOWN's visible image
+overlap at 20 pixels after the taller 448x336 presentation. The accidental menu
+swipe felt good, so a deliberately menu-only swipe option remains a future A/B
+test rather than a rejected idea.
 
 ## Immediate next steps
-1. Audit the remaining essential actions, led by weapon cycle and Escape/menu.
-2. If desired, measure a 448x336 traditional 4:3 display candidate against the
-   locked 448x280/35.2 FPS presentation.
-3. Run a longer combat session, or begin a separate Wolf3D/Spear feasibility
+1. Later A/B test fixed-zone menu navigation against a deliberately menu-only
+   swipe mode without changing gameplay or intermission input.
+2. Run a longer combat session, or begin a separate Wolf3D/Spear feasibility
    project and later investigate a two-game launcher.
-4. Keep the locked full-width pipeline and effects-only audio as defaults.
-5. Never read BOOT during gameplay.
+3. Keep the locked full-panel pipeline and effects-only audio as defaults.
+4. Do not expand BOOT beyond the accepted F15 short release or the explicitly
+   gated F15.1 hold candidate without a new safety and interaction review.

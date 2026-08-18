@@ -2,26 +2,43 @@
 
 ## Summary
 
-DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with pointing-finger movement plus the PWR button. The product goal is an enjoyable, completable handheld experience rather than proof that the port boots. Full-width 448x280 gameplay sustains 35.2 presented FPS over the complete one-minute combat route, up from 28.7 FPS, without extra static presentation memory. F11 is flashed: deterministic corner strafe is a modest improvement, while continuous tilt control is rejected. Runtime BOOT polling remains forbidden.
+DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with asymmetric thumb controls plus PWR and BOOT. The product goal is an enjoyable, completable handheld experience rather than proof that the port boots. F18 is installed and hardware-accepted as the core experience: full-panel 448x368, fixed thumb zones and guides in gameplay and menus, in-zone Use, score-screen progression, PWR Fire/Escape, BOOT tap next weapon, and BOOT-hold strafing. F18 deliberately stretches exact 4:3 by 9.5% vertically; F17 448x336 remains the exact-4:3 rollback, 448x320 the second visual rollback, and 448x280/35.2 FPS the measured performance rollback.
+Its checksum-valid one-minute combat baseline is 34.3 presented FPS with zero
+DMA timeouts; the normal non-profiler F18 image is restored on the device.
 
 ## Active goals
 
 - Establish repeatable frame/tic/memory/audio/input measurements on the proven baseline.
-- Preserve the locked 448x280 baseline and optionally measure 448x336 traditional 4:3 correction before deciding whether smaller bars justify the cost.
+- Preserve 448x336, 448x320, and measured 448x280 rollback artifacts.
 - Make movement and turning enjoyable enough for sustained combat and full-game progression.
 - Confirm extended-play stability through repeated E1M1-to-E1M2 runs.
 - Preserve the hardware-verified asynchronous sound-effect path while testing extended gameplay stability.
 - Keep effects-only audio as the device default while preserving music as an optional experiment.
-- Audit remaining essential actions, especially weapon selection and Escape/menu, before further control tuning.
+- Treat weapon selection and Escape/menu as solved essential actions; audit only genuinely missing controls before adding more vocabulary.
+- Treat F15's inherited F14.1 thumb geometry and visible guides as the navigation baseline.
+- Observe F15 through longer combat sessions before considering the BOOT safety/stability question fully mature.
+- Preserve F18 as the combined controls/display baseline; refine sensitivity,
+  guides, or zone geometry only in isolated future comparisons.
 - Measure memory and timing first, then refactor subsystems in small hardware-testable stages.
 
 ## Key decisions made
 
-- Keep the measured 448x280 raw-16:10 presentation locked; treat 448x336 traditional 4:3 correction as an optional measured experiment, not an assumed upgrade.
+- Accept full-panel 448x368 as the core experience because its hardware feel
+  outweighs strict aspect correction on this small display. Continue to state
+  that it stretches exact 4:3 by 9.5% vertically.
+- Keep F17 448x336 as exact-4:3 rollback and measured 448x280/35.2 FPS as the
+  performance rollback.
 - Keep packed transpose tiles because SH8601 MADCTL has no row/column exchange; the asynchronous two-buffer 20-row presenter is hardware-validated and the synchronous path remains a recovery fallback.
 - Place the RP2350 short-pointer window at `0x20040000..0x20080000`, ending at the linker stack limit.
-- Never read BOOT during normal gameplay; reserve it exclusively for entering BOOTSEL during power-on/reset.
-- Defer any BOOT-as-input revisit to an isolated single-core, audio-disabled SDK experiment; it is not part of the playable firmware roadmap now.
+- Accept F16 BOOT tap/hold only in local play: tap cycles weapon, hold modifies
+  LEFT/RIGHT to strafe. Double-click, menu, and network behavior remain disabled.
+- Use the fixed absolute thumb zones as the common interaction language in
+  gameplay and menus; translate them to each Doom state's native commands.
+- Advance intermissions through native Fire, never a custom level shortcut,
+  and require a fresh touch release after level exit before touch can do so.
+- Require staged admission for flash-CS input: isolated probe, silent Doom, then effects-enabled Doom; all three passed for F15.
+- Treat flash-backed audio DMA as the previously missed hazard: `silence_buffer` links in XIP and must move to SRAM before any BOOT-enabled Doom test.
+- Runtime BOOT must use the SDK `flash_safe_execute()` contract, register core1 with `flash_safe_execute_core_init()`, sample only in a single-player level, and map one debounced release to Doom's existing next-weapon path. Do not add hold/double actions.
 - Commit meaningful changes locally, never push without an explicit request, and normally squash unpublished commits into one milestone before pushing.
 - Keep README updates publication-oriented: major milestones or final pre-push cleanup only, not routine local commits.
 - Do not use continuous tilt for an essential action; repeated hardware tests made its neutral and activation too difficult to trust.
@@ -58,7 +75,74 @@ DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with pointing
 - F11 compiles the IMU out, maps double taps in the bottom-left/right 96x72px corners to six-tic 32-unit strafe bursts, and keeps double-tap Use elsewhere. Forward/back becomes quadratic over 140px instead of linear over 88px; F9 turning is unchanged.
 - F11 builds in the locked full-width asynchronous configuration with `__end__=0x2004930c`, leaving 224,500 zone bytes and no QMI8658 input symbols; its UF2 SHA-256 is `ec00e1262a4a3f53f93c9cb09cd6fc49b4e39ef4d9fe2ae820f30d1f1eba2cd6`.
 - F11 was flashed and its corner strafe was judged better than having no strafe, but not a finished interaction; detailed burst and movement-curve tuning is deferred.
+- F12 preserves F11 and adds a 450ms software-timed PWR hold for Escape. Tap-fire remains immediate and one-shot; after Escape, PWR input is suppressed through release to prevent accidental menu selection. The AXP2101 PMIC configuration is unchanged.
+- F12 was flashed and hardware-confirmed in-level. F12.1 resolves PWR on release so a hold never fires/selects first: short release emits Fire or Enter by context, while 450ms emits Escape/Back and suppresses release. Hybrid PWR double-click is replaced by hold; fallback is unchanged.
+- F12.1 builds in active and fallback configurations. The installed active image ends at `0x2004930c`, leaving 224,500 zone bytes; its UF2 SHA-256 is `ff0cb48361fdcb364912f67fe502eab45dd5be230a70223d6b971abb843cd107`.
+- F12.1 was installed and judged very comfortable for Fire and Escape in gameplay and menus. Very rapid click-click could collapse into one shot because adjacent key-up/key-down events lacked a fully sampled low tic.
+- F12.2 queues up to four same-context tap pulses and emits them with one low tic between, while flushing the queue before Escape. Its physical test still lost Alexander's fastest click-click, proving the virtual pulse boundary was not the only loss point.
+- The AXP2101 exposes PWR events as latched occurrence flags rather than counters, and Key1 is connected to PMIC PWRON rather than a raw RP2350 GPIO. F12.3 preserves a second press when a known first release and next press arrive in the same status mask. Active and fallback builds pass; active `__end__=0x2004930c`, headroom 224,500 bytes, UF2 SHA-256 `ae1d4d7626ff3f3c4549d4df1bbcc3aa3ae37624a971b60a0cb457af760089b5`.
+- F12.3 produced no practical pistol improvement. Doom checks the pistol again only after its 14-tic recovery, so one-tic Fire pulses during recoil are intentionally lost. Preserve vanilla cadence rather than buffering delayed shots.
+- F13 adds default-off `DOOM_TOUCH_DPAD`: an immediate fixed 160x160 bottom-left eight-way pad with a 12px neutral centre and normal/fast radial response. Its square excludes double-tap gestures so repeated direction taps cannot become accidental actions; Use and right strafe remain outside it. It adds 48 text bytes, no data/BSS, retains 224,500 bytes of zone headroom, and has UF2 SHA-256 `89ce0216629d17c76bc05bd16cbab0fe392c105b3ddc879e2394717d62ce4b5b`. The default pointing-finger UF2 remains byte-identical.
+- F13's hardware test was positive: absolute touch-and-hold felt like traditional keyboard Doom, gave more control, and let a broad thumb work where the relative mapping preferred a pointing finger. This selects fixed-position input for further tuning without yet selecting the radial geometry itself.
+- F14 adds default-off `DOOM_TOUCH_DPAD_THUMB_ZONES`: contiguous logical zones matching the sketch over `[0,340)x[70,368)`. LEFT is `[0,24)`, UP `[24,136)`, RIGHT `[136,340)`, and DOWN owns the bottom `[304,368)` across the full 340px control width. Release is the only neutral. Two 12px vertical transition bands compose forward+left/right; backward diagonals and the radial speed step are absent.
+- `DOOM_TOUCH_DPAD_OVERLAY` adds temporary dim outlines and an amber active-zone outline by touching only packed boundary pixels. It allocates no framebuffer. The candidate ends at `0x20049310`, leaving 224,496 zone bytes; UF2 SHA-256 is `8b2307eee78b403cbe592c5ea51cf2dc37f8fd25692d2c5ed51e65983b90ba61`. The F13 radial and pointing-finger UF2s remain byte-identical.
+- F14's physical test was the best control experience so far. LEFT/UP/RIGHT/DOWN, release-to-stop, and both forward-turn transition bands worked; diagonals could be refined but are not a blocker. The guides materially improved discoverability and remain enabled for extended testing. The only regression was that the control area suppressed Use double-taps.
+- F14.1 permits the same bounded stationary double-tap recogniser inside every F14 zone and resolves it to Use/Open. Immediate movement remains on both touch-downs, so the gesture can produce two tiny directional pulses but adds no general movement delay. It retains `__end__=0x20049310`, 224,496 zone bytes, and has UF2 SHA-256 `821fa198cd0115f8e520166939ed318ded16df5e752bbb4f9d43e3990ac7434d`; F13 and pointing-finger fallbacks remain byte-identical.
+- F14.1's in-zone Use/Open double tap is hardware-confirmed and works well.
+- The completed BOOT audit found the board switch is a designed 1 kΩ pull-down on flash CS, not a supply short, but the old Doom lockout missed a real flash reader: audio DMA's empty-queue `silence_buffer` is at XIP address `0x1005a1ec`. This is a plausible abnormal-audio mechanism, not proof of the prior odour's cause.
+- `boot_safety_probe` passed its one-press hardware gate: the audio/display-disabled black-screen image detected a brief press/release, entered ROM BOOTSEL, and produced no unexpected audio. The exact F14.1 image was restored and rebooted afterward.
+- Gate B is built behind default-off `DOOM_BOOT_NEXT_WEAPON`. It registers core 1 with the SDK flash-safe coordinator, samples only in a local level, ignores failed 2 ms safety handshakes, and queues one native forward weapon cycle after two stable press and release samples.
+- Gate B never initializes codec, audio PIO, or audio DMA; amp GPIO19 starts low and I2S GPIO20-24 stay high-impedance. The 2 KiB silence block moves from XIP to SRAM only in this candidate. `read_bootsel_raw=0x200008c4`, `silence_buffer=0x20046880`, `panel_chunks=0x2003d3a0`, zone headroom is 221,252 bytes, and UF2 SHA-256 is `891d6076db58253064dba38c4634322ac6109095915737243f38852de7d36076`.
+- Silent Gate B passed on hardware: one brief BOOT release changed weapon once and Alexander reported no abnormal behaviour. Exact F14.1 was restored and flash-verified immediately afterward.
+- F15 enables the separate sound-effects gate. Its active audio sources (`audio_buffers=0x2001deb8`, `silence_buffer=0x20046ca8`), display tiles (`0x2003d7c8`), BOOT callback (`0x200008c4`), and audio IRQ (`0x20001858`) are all SRAM-resident. It leaves 220,184 zone bytes; installed UF2 SHA-256 is `769879efd084c38f6702732479202f45e0a3c254ff3f026e82ec27f7d9fd5ec6`. Normal SFX and weapon cycling passed together on hardware.
+- F15.1 adds default-off BOOT hold interpretation without increasing the 25 ms
+  sampling rate or keeping flash suspended. A short release remains next
+  weapon; after about 300 ms physical hold, LEFT/RIGHT and the two forward
+  transition bands become sustained 32-unit strafe. Release suppresses weapon
+  cycling and restores turning. The candidate leaves 220,176 zone bytes and
+  has UF2 SHA-256
+  `6a6703b1a0c512f426252ca6981258360c18ac861395bb580b0949187076eaad`.
+- F15.1's bounded hardware test passed and the image is accepted as F16.
+  Alexander reported short weapon cycling, held left/right strafe, and
+  release-to-turn all worked great with no abnormal behavior.
 - The landscape panel is 448x368. Current 448x280 output leaves 44px bands above/below. A 448x336 4:3-corrected candidate would leave 16px bands and emit 20% more pixels; full 448x368 would emit 31.4% more and require stretch, crop, or renderer/UI redesign.
+- A selectable 448x320 stepping-stone now builds with 24px bands and 14.3%
+  more output pixels. It retains the proven two 20-row buffers and has exactly
+  the same text/data/BSS totals, `__end__=0x20049bf0`, and 220,176 zone bytes as
+  F16. Candidate hash is
+  `a253683ef45e8e412bcfb35e6a6c1884972f21cd39b653cb15945fcbd5fa8170`;
+  its short image/audio/gameplay gate passed and Alexander judged it excellent.
+  AUTO rebuilt exact F16.
+- The 448x336 candidate is the exact square-pixel equivalent of Doom's intended
+  4:3 CRT presentation. Its final 16 image rows use a padded 20-row transfer
+  with four cleared border rows. It adds 56 flash bytes, no SRAM, retains
+  `__end__=0x20049bf0` and 220,176 zone bytes, and has hash
+  `2a9f7a4ed74392e016fd2407fac1981aa1fb4c8e02c7d9724e0d25a31a913ad8`.
+  Its physical gate passed: image correct, visually good, and no perceptible
+  smoothness loss versus 448x320. It is now the preferred visual baseline.
+- The accepted input path was incorrectly gated to an active level. F17 routes
+  the same fixed zones to menu arrows, maps fresh intermission touch and PWR to
+  native Fire, and requires touch release on score-screen entry. At 448x336 it
+  also moves DOWN from physical y=304 to y=332 so only 20 pixels overlap the
+  image, with the 16-pixel black border extending its edge target. The build
+  retains `__end__=0x20049bf0` and 220,176 zone bytes. Its physical test passed:
+  menu routing, score progression, and shallow DOWN are fixed. Alexander liked
+  the accidental menu swipe enough to retain it as a future menu-only A/B test.
+- F18 scales the whole Doom frame to 448x368. Its partial eight-row tail is
+  assembled into an overlapping 20-row transaction using only the existing
+  two buffers. The one-time panel clear now also avoids its former 8-row final
+  stripe, the leading cause hypothesis for the changing coloured top-edge
+  remnant. F18 retains `__end__=0x20049bf0`, 220,176 zone bytes, and has UF2
+  SHA-256 `5290ec3a571113cc2bb5c701a1c299413d7b9743183c5ecdd4769c26e0e6ac3a`;
+  it was flashed, byte-verified, and hardware-accepted. Alexander loves the
+  full-panel result and reported no observable smoothness regression. It is
+  now the core presentation and combined experience baseline.
+- The optional F18 profiler captured 2,059 frames in 60.021 seconds (34.3 FPS):
+  average/max cadence 29,164/45,612us, presentation 24,469/31,064us, CPU
+  preparation 22,570us, blocking transfer service 1,899/4,312us, frame wait
+  1,350/3,808us, display wait at most 10us, and zero DMA timeouts. This is only
+  a 2.5% cadence regression from 448x280/35.2 FPS while emitting 31.4% more
+  pixels. The normal F18 firmware was restored after capture.
 - A future Wolfenstein 3D/Spear of Destiny port plus a two-game launcher is plausible but should begin as a separate engine/firmware-slot feasibility project using the shared board drivers.
 - The original four fixed hold zones remain available via a compile-time selector.
 - Video defaults to centered native 320x200, but 384x240, 416x260, and full-width 448x280 are now selectable Release configurations behind the same fused compose/scale/transpose presenter.
@@ -95,10 +179,9 @@ DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with pointing
 - Does the final normal full-width build remain stable through repeated E1M1-to-E1M2 runs now that performance profiling is locked?
 - Does asynchronous SFX remain stable during a longer sustained-combat test?
 - Can the optional MUSX synthesizer's timbre be improved enough to suit the small speaker?
-- What non-BOOT, non-PWR-hold gesture should eventually provide Escape/menu?
-- Are F11's left/right corner bursts correctly directed and long enough to dodge without overshooting?
+- How does the accepted F16 control baseline feel during a longer combat run?
 - Is the 140px quadratic movement curve calm enough in the middle while keeping far-travel running reachable?
-- Does immediate tap-only PWR fire remain reliable during combat without accidental physical holds?
-- Which weapon-change gesture is fast, deliberate, and compatible with move/turn, corner strafe, and Use?
-- Does a measured 448x336 build remain smooth enough to justify reducing the black bands from 44px to 16px each?
+- Does release-resolved PWR tap-fire remain responsive and reliable during combat?
+- Would an explicitly menu-only swipe mode feel better than F17 fixed-zone
+  navigation without weakening input consistency elsewhere?
 - Can Doom and a Wolf3D/Spear port fit as independent application/data slots within the 16 MiB flash, selected by a small launcher?

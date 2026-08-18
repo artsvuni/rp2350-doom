@@ -2,6 +2,342 @@
 
 ## 2026-08-18
 
+### 20:53 — Record the F18 full-panel performance baseline
+
+- Ran the optional bounded in-level profiler at the accepted 448x368 F18
+  presentation: 2,059 frames in 60.021 seconds, or 34.3 presented FPS.
+- Validated the 100-byte persistent report checksum; cadence averaged 29,164us,
+  presentation 24,469us, and display DMA recorded zero timeouts.
+- Recorded that this is only 2.5% slower in cadence than 448x280/35.2 FPS while
+  emitting 31.4% more pixels; the two gameplay routes were representative, not
+  frame-identical benchmarks.
+- Restored and programmer-verified the accepted normal F18 UF2 after capture.
+- Updated README, roadmap, decisions, context, TODOs, and handoff.
+- Commit: included in this F18 measured-baseline documentation commit.
+
+### 20:07 — Accept F18 as the core handheld experience
+
+- Hardware-accepted installed 448x368 after Alexander reported that he loved
+  the full-panel experience and wanted it retained as the core presentation.
+- Kept the geometry claim precise: F18 deliberately stretches 448x336 by 9.5%
+  vertically; F17 remains exact-4:3 rollback and 448x280 the measured rollback.
+- Demoted a 448x368 combat capture from acceptance gate to optional baseline
+  documentation; subjective success is sufficient to keep the current image.
+- Updated README, roadmap, controls, context, TODOs, and handoff.
+- Commit: included in this F18 acceptance milestone commit.
+
+### 19:33 — Build F18 full-panel 448x368 candidate
+
+- Chose a reversible full-panel stretch test after Alexander preferred game
+  pixels over permanent top/bottom UI; 448x336 remains the installed rollback.
+- Added a memory-neutral final-tile path that reuses the two asynchronous
+  buffers and resends rows 348..359 with 360..367 in one 20-row transaction.
+- Removed the one-time clear's unreliable 8-row tail by ending with an
+  overlapping full 20-row stripe; hardware must confirm whether this removes
+  the changing coloured remnant previously visible in the top-right band.
+- Built both 448x368 and a separate 448x336 regression configuration. F18 keeps
+  `__end__=0x20049bf0`, 220,176 zone bytes, and has UF2 SHA-256
+  `5290ec3a571113cc2bb5c701a1c299413d7b9743183c5ecdd4769c26e0e6ac3a`.
+- Flashed and byte-verified F18 through autonomous `picotool -f`; it rebooted
+  to application mode and now awaits Alexander's short physical gate.
+- Commit: included in this F18 full-panel candidate commit.
+
+### 19:08 — Accept F17 and retain menu swipe as a future option
+
+- Hardware-confirmed that F17 fixes score-screen progression and fixed-zone
+  menu routing, with DOWN restored to its shallow 448x336 presentation.
+- Accepted the installed F17 firmware as the new controls baseline.
+- Recorded Alexander's positive response to the old menu swipe as a future
+  menu-only A/B candidate; gameplay and intermission mappings stay unchanged.
+- Updated README and project/control context to reflect the accepted behavior.
+- Commit: included in this F17 acceptance documentation commit.
+
+### 18:55 — Build F17 state-consistent controls
+
+- Root-caused the stuck E1M1 score screen: non-level input reverted to arrows
+  and PWR Enter, but Doom intermission advances only from native Attack/Use.
+- Routed fixed thumb zones to menu arrows, fresh post-release intermission
+  touch to Fire, and intermission PWR to Fire without changing Doom mechanics.
+- Made DOWN view-relative so 448x336 restores the original 20-pixel visible
+  strip; `__end__` and 220,176-byte zone headroom are unchanged.
+- Built candidate SHA-256 `8605a47aa53b71c65ba96602c1179f28d3a7b11420691db01e5574c32ad2a324`;
+  fixed-zone menu, score progression, and DOWN geometry await hardware test.
+- Commit: included in this F17 input-state candidate commit.
+
+### 18:41 — Accept exact-4:3 448x336 on hardware
+
+- Hardware-passed the padded final tile: the image looks correct and good, and
+  short gameplay feels very smooth with no perceptible loss versus 448x320.
+- Promoted installed 448x336 to the preferred visual baseline while retaining
+  exact 448x320 as visual rollback and 448x280/35.2 FPS as measured rollback.
+- Kept the performance claim qualitative; one bounded 448x336 combat capture
+  is the next gate before closing display work or separately debating 448x368.
+- Commit: included in this 448x336 acceptance commit.
+
+### 18:08 — Pass 448x320 and build exact-4:3 448x336
+
+- Hardware-passed installed 448x320 for image, audio, and short gameplay;
+  Alexander judged it excellent and visually much better.
+- Clarified that 448x320 partially corrects Doom's 320x200 non-square-pixel CRT
+  presentation; 448x336 is the exact 4:3 square-pixel equivalent.
+- Added one bounded padded-final-tile path: 16 image rows plus four cleared
+  border rows in the unchanged 20-row transaction, with no additional buffer.
+- Exact 448x280 and 448x320 hashes remain unchanged. Candidate 448x336 hash is
+  `2a9f7a4ed74392e016fd2407fac1981aa1fb4c8e02c7d9724e0d25a31a913ad8`;
+  it adds 56 flash bytes, no SRAM, and retains 220,176 zone bytes.
+- Commit: included in this exact-4:3 display candidate commit.
+
+### 17:51 — Build the isolated 448x320 taller-display candidate
+
+- Added a 448-wide height override while keeping AUTO as the conservative,
+  byte-identical 448x280 behavior.
+- Selected 448x320 as the first height gate because it adds 14.3% pixels and
+  reduces each black band from 44px to 24px without changing the proven
+  two-buffer 20-row asynchronous DMA transaction path.
+- Rebuilt accepted F16 exactly at
+  `6a6703b1a0c512f426252ca6981258360c18ac861395bb580b0949187076eaad`.
+- Built candidate
+  `a253683ef45e8e412bcfb35e6a6c1884972f21cd39b653cb15945fcbd5fa8170`;
+  text/data/BSS, `__end__=0x20049bf0`, and 220,176 zone bytes are unchanged.
+- Documented why 448x336 follows only after this gate: 336 is not divisible by
+  the accepted 20-row tile and therefore mixes scaling with transfer changes.
+- Commit: included in this taller-display candidate commit.
+
+### 17:45 — Accept F16 controls and move to taller display work
+
+- Hardware-accepted the BOOT-hold modifier: short release still changes weapon,
+  held LEFT/RIGHT strafes, and release restores turning. Alexander reported it
+  worked great with no abnormal behavior.
+- Documented the complete control evolution: floating-anchor occlusion and
+  thumb-centroid problems, rejected pitch/roll reliability, fixed asymmetric
+  thumb-zone gains, and the impractical corner-strafe gesture F16 replaces.
+- Promoted candidate hash
+  `6a6703b1a0c512f426252ca6981258360c18ac861395bb580b0949187076eaad`
+  to the installed F16 controls baseline; exact F15 and F14.1 remain rollbacks.
+- Updated README, safety audit, control design, roadmap, context, TODOs, and
+  handoff; sensitivity refinement is deferred while taller display work starts.
+- Commit: included in this F16 controls milestone commit.
+
+### 17:32 — Build a gated BOOT-hold strafe candidate
+
+- Added default-off `DOOM_BOOT_HOLD_STRAFE`: short release remains next weapon;
+  after 250 ms beyond the debounced press, LEFT/RIGHT thumb zones become
+  sustained strafe and the forward transition bands become forward-strafe.
+- A resolved hold suppresses weapon cycling on release, restores turning after
+  release debounce, and prevents a modifier contact becoming double-tap Use.
+- Kept F15's 25 ms flash-safe sampling and all safety invariants unchanged.
+  Option-off F15 rebuilds byte-identically at
+  `769879efd084c38f6702732479202f45e0a3c254ff3f026e82ec27f7d9fd5ec6`.
+- Candidate UF2 SHA-256 is
+  `6a6703b1a0c512f426252ca6981258360c18ac861395bb580b0949187076eaad`;
+  it leaves 220,176 zone bytes and awaits one bounded physical test.
+- Commit: included in this F15.1 candidate commit.
+
+### 14:33 — Accept F15 BOOT next-weapon with normal sound
+
+- Hardware-passed the final effects-enabled gate: normal SFX remained present,
+  one brief BOOT release cycled weapons correctly, and Alexander reported the
+  button worked well with everything appearing normal.
+- Accepted the installed image as F15. Runtime BOOT remains release-only and
+  local-level-only; hold, double-click, menu, and network actions stay excluded.
+- Updated README, control design, roadmap, safety audit, decisions, context,
+  TODOs, and handoff to reflect the user-facing control milestone.
+- Installed UF2 SHA-256 is
+  `769879efd084c38f6702732479202f45e0a3c254ff3f026e82ec27f7d9fd5ec6`;
+  F14.1 remains the exact rollback.
+- Commit: included in this F15 milestone commit.
+
+### 14:26 — Pass silent Doom and audit the effects-enabled BOOT gate
+
+- Hardware-passed silent Gate B: Doom booted, one brief BOOT release changed
+  weapon once in-level, and Alexander reported everything normal.
+- Restored and flash-verified exact F14.1
+  `821fa198cd0115f8e520166939ed318ded16df5e752bbb4f9d43e3990ac7434d`;
+  its application-mode USB interface returned normally.
+- Added default-off `DOOM_BOOT_WITH_SOUND_EFFECTS`, valid only with BOOT next-
+  weapon. BOOT builds always move the audio fallback DMA source to SRAM; the
+  audio-disabled version remains the default.
+- Audited the effects candidate's audio buffers, silence, display tiles,
+  optional network buffers, BOOT callback, and audio IRQ as SRAM-resident. It
+  leaves 220,184 zone bytes and has UF2 SHA-256
+  `769879efd084c38f6702732479202f45e0a3c254ff3f026e82ec27f7d9fd5ec6`.
+- Rebuilt silent Gate B and normal F14.1 byte-identically. Did not flash the
+  effects candidate; one bounded sound-on test is next.
+- Commit: included in this effects-gate checkpoint.
+
+### 14:19 — Build and audit silent Gate B next-weapon firmware
+
+- Added default-off `DOOM_BOOT_NEXT_WEAPON`; normal F14.1 builds contain no
+  BOOT sampler and rebuilt byte-identically at
+  `821fa198cd0115f8e520166939ed318ded16df5e752bbb4f9d43e3990ac7434d`.
+- Registered Doom core 1 with the SDK flash-safety coordinator before its
+  launch handshake and limited sampling to local single-player level play.
+- Added 25 ms / two-sample press-and-release debounce with a 2 ms safety
+  timeout. Failed lockout attempts are ignored; release queues one existing
+  Doom forward weapon-cycle request.
+- Made Gate B silent from first hardware initialization: amp low, I2S pins
+  high-impedance, no codec/PIO/audio-DMA initialization, and the old XIP
+  silence buffer relocated to SRAM for the candidate only.
+- Verified the BOOT callback at SRAM `0x200008c4`, silence at `0x20046880`,
+  display tiles at `0x2003d3a0`, and 221,252 bytes between heap end and core 1
+  stack. Candidate UF2 SHA-256 is
+  `891d6076db58253064dba38c4634322ac6109095915737243f38852de7d36076`.
+- Did not flash the candidate. The next action is one bounded USB-only Gate C
+  press/release test with silence expected and F14.1 retained as rollback.
+- Commit: included in this Gate B candidate commit.
+
+### 14:09 — Pass the isolated BOOT safety gate and restore F14.1
+
+- Installed only the isolated `boot_safety_probe` over application-mode USB;
+  the write and flash verification completed successfully.
+- Alexander briefly pressed and released BOOT once. The probe entered ROM
+  BOOTSEL exactly as designed; `picotool info` confirmed RP2350 A2, matching
+  chip ID `05bcf1c1aa06aa58`, and `boot type: bootsel`.
+- No unexpected audio occurred during the bounded test. This passes only the
+  single-core, amplifier/display-disabled Gate A and does not yet validate Doom
+  core1/render/audio interaction.
+- Restored the byte-verified F14.1 UF2
+  `821fa198cd0115f8e520166939ed318ded16df5e752bbb4f9d43e3990ac7434d`,
+  verified the flash write, rebooted into application mode, and confirmed the
+  board's USB application interface returned.
+- Authorized the next engineering stage: relocate the audio DMA silence source
+  to SRAM, register Doom core1 with the SDK flash-safety helper, and build a
+  default-off, audio-disabled next-weapon candidate.
+- Commit: included in this isolated-probe hardware-result commit.
+
+### 13:48 — Gate BOOT next-weapon behind an isolated safety probe
+
+- Hardware-confirmed F14.1's in-zone Use/Open double tap works well and locked
+  it into current project context.
+- Audited the exact Waveshare schematic and Raspberry Pi runtime-BOOT/flash
+  contract. Key2 is a designed 1 kΩ flash-CS pull-down rather than a supply
+  short, but the earlier Doom lockout did not cover autonomous DMA readers.
+- Found the concrete missing hazard: audio DMA reads `silence_buffer` from XIP
+  address `0x1005a1ec` whenever its SRAM SFX queue is empty. This plausibly
+  explains the abnormal audio, but does not prove the reported odour's cause.
+- Added a written three-gate protocol and a standalone `boot_safety_probe` that
+  forces the speaker amp and display off, leaves I2S pins high-impedance, uses
+  no DMA/I2C/PIO/audio/core1/USB stdio, and enters ROM BOOTSEL only after a
+  confirmed press plus release through `flash_safe_execute()`.
+- Built the probe, verified its sampling callback resides in SRAM at
+  `0x20000110`, confirmed no DMA/multicore/I2C/PIO/audio/display symbols link,
+  and recorded UF2 SHA-256
+  `05ca114df6c699d4deeb4af733e000ebdafe22dfae286ad25ea5bbcaeb65c04f`.
+- Rebuilt the F14.1 Doom image byte-identically at
+  `821fa198cd0115f8e520166939ed318ded16df5e752bbb4f9d43e3990ac7434d`.
+- Deliberately did not flash the probe or add BOOT to Doom; the isolated
+  physical press/release is the next mandatory safety gate.
+- Commit: included in this BOOT safety-probe commit.
+
+### 13:32 — Restore Use double-tap inside the accepted thumb controls
+
+- Hardware-accepted F14 as the best control experience so far: all four
+  asymmetric zones worked with a thumb, release-to-stop felt right, both
+  forward-turn diagonals were usable, and the visible guides improved control.
+- Added F14.1: two short stationary taps anywhere inside the F14 control area
+  now emit Use/Open on the second release instead of being discarded.
+- Preserved immediate movement on touch-down, accepting two tiny directional
+  pulses during the gesture rather than adding latency to every held control.
+- Rebuilt F13 radial and the pointing-finger fallback byte-identically. F14.1
+  keeps `__end__=0x20049310`, 224,496 zone bytes, and UF2 SHA-256
+  `821fa198cd0115f8e520166939ed318ded16df5e752bbb4f9d43e3990ac7434d`.
+- Commit: included in this in-zone Use-double-tap commit.
+
+### 12:56 — Adapt the D-pad to asymmetric thumb zones
+
+- Hardware feedback accepted F13 directionally: its touch-and-hold model feels
+  more like keyboard Doom, provides more control, and works with a thumb much
+  better than the relative pointing-finger mapping.
+- Added default-off F14 thumb zones matching Alexander's sketch: a narrow
+  physical-edge LEFT strip, fingertip-width UP zone, large RIGHT zone, and
+  shallow bottom-edge DOWN strip. Zones are contiguous and release is the only
+  neutral action.
+- Preserved forward-turn diagonals only in two deliberate 12px transition
+  bands; omitted backward diagonals and the radial speed step for a simpler
+  first comparison.
+- Added an optional diagnostic outline overlay with amber active-zone
+  highlighting. It writes only box boundaries into the existing packed tile,
+  adding no framebuffer or alpha-blending pass.
+- The accepted pointing-finger and F13 radial UF2s rebuild byte-identically.
+  F14 ends at `0x20049310`, leaves 224,496 zone bytes, and its pre-flash UF2
+  SHA-256 is `8b2307eee78b403cbe592c5ea51cf2dc37f8fd25692d2c5ed51e65983b90ba61`.
+- BOOT remains untouched pending the separate read-only safety audit.
+- Commit: included in this asymmetric-thumb-D-pad commit.
+
+### 12:22 — Build a fixed eight-way D-pad comparison
+
+- Recorded F12.3's unchanged physical rapid-fire result and traced the remaining
+  middle-speed loss to Doom's 14-tic pistol recovery rather than more driver
+  pulse loss; vanilla weapon cadence remains unchanged.
+- Added default-off `DOOM_TOUCH_DPAD`: a fixed 160x160 bottom-left pad with a
+  12px neutral centre, eight-way movement/turn composition, and normal/fast
+  radial response. Its square owns repeated taps to prevent accidental gesture
+  actions; Use and right-side strafe remain available outside it.
+- The D-pad adds 48 text bytes and no data/BSS. Active `__end__=0x2004930c`
+  still leaves 224,500 zone bytes; UF2 SHA-256 is
+  `89ce0216629d17c76bc05bd16cbab0fe392c105b3ddc879e2394717d62ce4b5b`.
+- Rebuilt the accepted pointing-finger image byte-identically. BOOT remains
+  untouched pending the requested read-only safety audit after this test.
+- Commit: included in this fixed-D-pad-candidate commit.
+
+### 11:49 — Preserve a second PWR press in a coalesced PMIC status
+
+- Hardware-tested F12.2: paced click-click produced two shots, but Alexander's
+  fastest pair still produced one, so pulse spacing was not the only loss.
+- Confirmed that AXP2101 REG49 exposes PWR events as latched occurrence flags
+  and the board routes Key1 to PMIC PWRON rather than a raw RP2350 GPIO.
+- When a known tap's release and the next press arrive together, F12.3 now
+  completes the first tap and re-arms the second instead of clearing both.
+- Active and fallback builds pass. Active `__end__=0x2004930c`, leaving 224,500
+  zone bytes; UF2 SHA-256 is
+  `ae1d4d7626ff3f3c4549d4df1bbcc3aa3ae37624a971b60a0cb457af760089b5`.
+- Commit: included in this coalesced-PWR-edge commit.
+
+### 11:41 — Preserve rapid PWR taps as distinct Fire pulses
+
+- Hardware-accepted F12.1 release-resolved Fire and Escape as very comfortable
+  in gameplay and menus, but very fast click-click could produce one shot.
+- Traced the loss to adjacent virtual-key pulses: key-up and the next key-down
+  in one Doom tic never give `player->attackdown` a sampled released state.
+- Added a four-entry fixed pulse queue with one full low tic between shots;
+  first-shot latency and the 450ms hold are unchanged, and Escape flushes the
+  queue before opening the menu.
+- Active and fallback builds pass. Active `__end__=0x2004930c`, leaving 224,500
+  zone bytes; UF2 SHA-256 is
+  `702d44306ff7203f5d5fd5d786fca19f24c5ab9634a4e6e1440b63a3acbdb7fb`.
+- Commit: included in this rapid-PWR-pulse commit.
+
+### 11:25 — Extend short PWR hold to menu Escape/Back
+
+- Hardware-confirmed the installed F12 in-level hold works.
+- Extended the 450ms recogniser to menu/title/intermission contexts, then
+  corrected the press/hold ambiguity: press commits nothing; release before
+  450ms emits Fire or Enter by context; reaching 450ms emits Escape/Back.
+- A winning hold suppresses release and replaces the hybrid PWR double-click
+  path, preventing any Fire, Enter, or delayed Select from the same gesture.
+- Active and fallback builds pass. Active `__end__=0x2004930c`, leaving 224,500
+  zone bytes; UF2 SHA-256 is
+  `ff0cb48361fdcb364912f67fe502eab45dd5be230a70223d6b971abb843cd107`.
+- Commit: included in this menu-context PWR-hold refinement commit.
+
+### 11:06 — Build a short software-timed PWR hold for Escape
+
+- Preserved F11 touch controls and immediate one-shot PWR fire; a continuous
+  PWR hold now emits Escape once after 450ms rather than waiting for the
+  AXP2101's 1–2.5-second long-press IRQ.
+- Suppressed all PWR events until physical release after Escape so the PMIC's
+  completed short-press event cannot select an item in the newly opened menu.
+- Left the PMIC configuration unchanged. Its documented power-off range remains
+  4–10 seconds, so continued holding can still power off the board.
+- Active and fallback builds pass. Active `__end__=0x20049314`, leaving 224,492
+  zone bytes; UF2 SHA-256 is
+  `9a3206a60349be30928a14a5fa75ff45291f254e612bf7d90ca4eeda4fdec62d`.
+- Bounded application-mode `picotool` reset attempts failed before writing;
+  F11 remains installed and F12 awaits manual BOOTSEL installation.
+- Separated any future BOOT-as-control work into a written safety audit and an
+  isolated single-core, audio-disabled experiment; no runtime BOOT code changed.
+- Commit: included in this short-PWR-hold candidate commit.
+
 ### 00:31 — Wrap the playable full-width controls milestone
 
 - Updated the publication README to reflect the measured 448x280/35.2 FPS

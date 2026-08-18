@@ -93,6 +93,11 @@ void I_StartFrame (void);
 
 void I_StartTic (void);
 
+#if DOOM_BOOT_NEXT_WEAPON
+// BOOT sampling is permitted only after core1 joins the SDK flash-safe path.
+boolean I_BootInputFlashSafeReady(void);
+#endif
+
 // Enable the loading disk image displayed when reading from disk.
 
 void I_EnableLoadingDisk(int xoffs, int yoffs);

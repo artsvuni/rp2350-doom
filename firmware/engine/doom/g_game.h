@@ -69,6 +69,11 @@ void G_WorldDone (void);
 
 void G_BuildTiccmd (ticcmd_t *cmd, int maketic); 
 
+#if DOOM_BOOT_NEXT_WEAPON
+// Queue the same forward weapon-cycle request consumed by G_BuildTiccmd().
+void G_QueueNextWeapon(void);
+#endif
+
 void G_Ticker (void);
 boolean G_Responder (event_t*	ev);
 
@@ -84,4 +89,3 @@ extern isb_int8_t vanilla_demo_limit;
 extern uint8_t g_load_slot;
 #endif
 #endif
-

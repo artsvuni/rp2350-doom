@@ -4,7 +4,7 @@
 
 Create an enjoyable, self-contained handheld version of DOOM on the tiny
 [Waveshare RP2350-Touch-AMOLED-1.8](https://www.waveshare.com/rp2350-touch-amoled-1.8.htm)
-using only the board's touchscreen and PWR button—no keyboard,
+using only the board's touchscreen and two onboard buttons—no keyboard,
 external controller, or display. The ambition is not just to prove the port
 runs, but to make combat controllable and the presentation smooth enough that
 finishing the game on this device feels realistic.
@@ -15,16 +15,22 @@ board's 368×448 SH8601 AMOLED, FT3168 touch controller, AXP2101 power
 management IC, and ES8311 audio codec. The result boots, renders, loads E1M1,
 and is playable on the physical device.
 
-> **Current status (18 August 2026):** the effects-only build is verified on
+> **Current status (18 August 2026):** the F18 effects-only build is verified on
 > hardware with working touch controls, menu navigation, combat, and sound
-> effects. Full-width 448×280 presentation sustains 35.2 FPS over a measured
-> one-minute combat run with zero display-DMA timeouts and no additional static
-> presentation memory. Music also works, but is disabled by default because the
-> lightweight synthesized timbre is not a good fit for the small speaker. The
-> latest F11 control build uses pointing-finger move/turn, touchscreen
-> double-tap Use, and short bottom-corner strafe bursts. Tilt locomotion and
-> continuous tilt strafing were tested and rejected as too easy to trigger
-> unintentionally.
+> effects. The installed full-panel 448×368 presentation sustains **34.3 FPS**
+> over a measured one-minute combat run with zero display-DMA timeouts and no
+> additional static presentation memory. The 448×280 rollback measures 35.2
+> FPS. Music also works, but is disabled by default because the
+> lightweight synthesized timbre is not a good fit for the small speaker. F18
+> uses fixed asymmetric thumb zones, double-tap Use/Open, PWR tap/hold for
+> Fire and Escape, a short BOOT release for next weapon, and BOOT hold as a
+> strafe modifier for the LEFT/RIGHT zones. Alexander judged this combination
+> comfortable and the strongest playable control experience so far. Tilt
+> locomotion and continuous tilt strafing were tested and rejected as
+> unreliable. The installed image fills the complete 448×368 panel. It
+> deliberately stretches the exact-4:3 version by 9.5% vertically, but
+> Alexander loves the result and selected it as the core experience after its
+> hardware test. Exact-4:3 448×336 and measured 448×280 remain rollbacks.
 
 The staged product and engineering plan is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md).
@@ -32,31 +38,43 @@ The staged product and engineering plan is in
 ## Display geometry
 
 The physical AMOLED is 368×448 in portrait, or **448×368** in the landscape
-orientation used by Doom. The current game image is **448×280**: it fills every
-horizontal pixel and preserves the raw 320×200 image's 16:10 shape, leaving
-44-pixel black bands above and below.
+orientation used by Doom. The installed F18 game image is **448×368**, filling
+the complete panel without permanent UI bands.
 
-| Candidate | Top/bottom bands | Output pixels vs current | Trade-off |
+| Mode | Top/bottom bands | Pixels vs 448×280 | Status and trade-off |
 |---|---:|---:|---|
-| 448×280 current | 44px each | baseline | Measured 35.2 FPS; raw 16:10 image |
-| 448×336 | 16px each | +20.0% | Traditional 4:3 correction; best next experiment |
-| 448×368 | none | +31.4% | Fills panel but needs stretch, crop, or renderer/UI redesign |
+| 448×280 measured rollback | 44px each | baseline | 35.2 FPS; raw square-pixel 16:10 image |
+| 448×320 rollback | 24px each | +14.3% | Physical gate passed; visually excellent; performance not measured |
+| 448×336 F17 rollback | 16px each | +20.0% | Exact traditional 4:3 correction; hardware passed |
+| 448×368 F18 core | none | +31.4% | 34.3 FPS measured; hardware-accepted full panel; stretches exact 4:3 by 9.5% vertically |
 
-The 448×336 candidate is more interesting than blindly stretching to the full
-panel: it uses 91% of the panel height and matches the traditional 4:3 display
-shape of 320×200-era Doom. Its performance, audio pacing, and gameplay feel
-must be measured on hardware before it replaces the locked 448×280 path. The
-remaining bands could alternatively hold quiet port UI such as battery state.
+The raw 320×200 framebuffer is 16:10 only when treated as square pixels.
+Original Doom was normally shown on a 4:3 CRT using vertically taller pixels;
+the equivalent square-pixel correction is 320×240, or exactly 448×336 here.
+The successful 448×320 test moves partway toward that intended shape. F17
+448×336 completes the exact 4:3 correction. F18 then scales the complete frame
+another 9.5% vertically to fill the panel; that distortion is explicit, but its
+physical experience is preferred. Its final eight rows are combined with 12
+overlapping rows in one proven 20-row transaction using the existing two
+buffers. Future battery state should appear only as a low-battery overlay,
+rather than reclaiming permanent bands from the game.
 
 ## What works
 
 - DOOM Shareware boots from flash and loads the first episode.
-- Full-width 448×280 gameplay preserves Doom's 16:10 image in landscape.
-- One pointing finger controls proportional forward/back movement and turning
-  from a floating anchor anywhere on the screen.
-- Bottom-corner double taps produce short left/right strafe bursts; double-tap
-  elsewhere activates Use/Open.
-- The PWR button fires in-game and handles selection/back in menus.
+- Full-panel 448×368 gameplay is hardware-accepted as the core experience;
+  exact-4:3 448×336 is the visual rollback and measured 448×280 remains the
+  performance rollback.
+- Fixed visible thumb zones control forward/back movement and left/right
+  turning; two narrow boundaries combine forward movement with turning.
+- A stationary double tap activates Use/Open, including inside the thumb zones;
+  a bottom-right double tap produces a short right-strafe burst.
+- A short PWR release fires in-game or confirms in menus; a 450 ms hold opens
+  Escape/Back without firing first.
+- A short BOOT press/release cycles to Doom's next selectable owned weapon in a
+  local single-player level.
+- Holding BOOT converts the LEFT/RIGHT thumb zones from turning to sustained
+  strafing; releasing it restores turning without changing weapon.
 - Eight-channel sound effects play through the onboard ES8311 codec and
   speaker using non-blocking DMA/IRQ audio.
 - An optional nine-voice fixed-memory MUSX music synthesizer plays the WAD's
@@ -70,34 +88,36 @@ remaining bands could alternatively hold quiet port UI such as battery state.
 
 | Input | In game | In menus |
 |---|---|---|
-| Touch, drag up/down, and hold | Proportional forward/back | Move selection up/down |
-| Touch, drag left/right, and hold | Proportional turn left/right | Move selection left/right |
-| Double-tap bottom-left/right corner | Short strafe burst left/right | — |
-| Double-tap elsewhere | Use/open | — |
-| PWR tap | Fire once | Select/confirm |
-| PWR double press | — | Back |
-| PWR long press | Board-managed power action | Board-managed power action |
-| BOOT | Reserved for entering BOOTSEL while powering/resetting | — |
+| Hold LEFT / UP / RIGHT / DOWN touch zone | Turn or move at normal Doom speed | Fixed-zone navigation |
+| Hold an UP boundary band | Move forward while turning | — |
+| Stationary double tap | Use/open | — |
+| Double-tap bottom-right outside the pad | Short strafe-right burst | — |
+| PWR short release | Fire once | Select/confirm |
+| PWR hold for 450 ms | Escape/menu | Back |
+| BOOT short press/release | Next selectable owned weapon | No action |
+| Hold BOOT + LEFT / RIGHT | Strafe left / right until released | No action |
+| Continued long PWR hold | Board-managed power action | Board-managed power action |
 
-The in-game gesture starts wherever the finger lands and uses both axes at
-once, so the player can move while turning. Both axes use a one-pixel jitter
-guard. Turning follows a compact quadratic 48-to-960 response over 112 pixels.
-Forward/back follows a gentler quadratic 4-to-50 response over 140 pixels, so
-the middle of the gesture remains near ordinary walking and full run requires a
-deliberate far reach. Lifting the finger stops move/turn immediately. The
-original fixed touch-zone model remains behind a compile-time selector.
+On an intermission/score screen, release the touchscreen once after leaving the
+level, then tap any touch zone or PWR to accelerate the statistics and continue
+using Doom's native Fire action.
 
-The current corner dodge is intentionally modest rather than a finished
-solution. Weapon selection and Escape/menu entry are the main missing control
-decisions. A future experiment should compare top-corner previous/next-weapon
-gestures with other mappings before adding more overlapping touch vocabulary.
+The asymmetric touch layout uses the physical left and bottom edges to make its
+small LEFT and DOWN targets discoverable, while UP and RIGHT receive more area.
+There is no neutral software zone: lifting the thumb stops movement immediately.
+The visible boundary overlay materially improved control during hardware tests
+and remains enabled. The previous floating pointing-finger and radial D-pad
+models remain available through build switches.
 
-Escape/menu entry is not currently mapped. Runtime BOOT polling was tested and
-then removed: this board's BOOT button shares the external-flash chip-select
-signal, and both BOOT-enabled Doom builds behaved abnormally while the
-otherwise identical pre-BOOT firmware remained stable. BOOT is therefore
-reserved exclusively for entering the ROM loader. A future PWR or touch
-gesture will provide Escape without disturbing flash access.
+BOOT shares the external-flash chip-select signal, so its runtime use is not a
+normal GPIO read. F15's short release was admitted only after an isolated probe, a silent Doom
+test, and a sound-enabled Doom test all passed. The sampler runs from SRAM via
+the Pico SDK's multicore flash-safety coordinator, ignores failed lockouts,
+and is disabled outside local level play. F16 reuses the same brief 25 ms
+sampler—flash is not held suspended during the physical hold—and distinguishes
+tap from hold in software. Every active display/audio DMA source is SRAM-backed.
+Full evidence and the rollback
+protocol are in [`docs/BOOT-RUNTIME-SAFETY.md`](docs/BOOT-RUNTIME-SAFETY.md).
 
 ## Build and flash
 
@@ -120,16 +140,23 @@ cmake --build firmware/build --target doom -j4
 The resulting game firmware is `firmware/build/doom.uf2`. The default build
 includes sound effects but no music.
 
-The current full-width F11 candidate is built explicitly so the conservative
+The current full-panel F18 build is configured explicitly so the conservative
 320×200 fallback remains the CMake default:
 
 ```sh
 cmake -S firmware -B firmware/build-controls-448 \
   -DCMAKE_BUILD_TYPE=Release \
   -DDOOM_DISPLAY_WIDTH=448 \
+  -DDOOM_DISPLAY_HEIGHT_OVERRIDE=368 \
   -DDOOM_PANEL_CHUNK_ROWS=20 \
   -DDOOM_ASYNC_AMOLED=ON \
   -DDOOM_HYBRID_CONTROLS=ON \
+  -DDOOM_TOUCH_DPAD=ON \
+  -DDOOM_TOUCH_DPAD_THUMB_ZONES=ON \
+  -DDOOM_TOUCH_DPAD_OVERLAY=ON \
+  -DDOOM_BOOT_NEXT_WEAPON=ON \
+  -DDOOM_BOOT_HOLD_STRAFE=ON \
+  -DDOOM_BOOT_WITH_SOUND_EFFECTS=ON \
   -DDOOM_ROLL_STRAFE=OFF
 cmake --build firmware/build-controls-448 --target doom -j4
 ```
@@ -212,20 +239,23 @@ program, not the game.
 | Engine | Vendored `DOOM_TINY` RP2040/RP2350 port derived from Chocolate DOOM |
 | CPU model | Game/tic work on core 0; rendering/presentation work on core 1 |
 | Display | SH8601 QSPI output with two asynchronous 20-row software-transpose tiles; CPU packing overlaps panel DMA |
-| Input | FT3168 coherent two-axis touch, double-tap actions, and AXP2101 PWR events; motion and runtime BOOT access disabled in F11 |
+| Input | FT3168 fixed thumb zones and double taps; AXP2101 PWR release/hold; flash-safe BOOT tap for weapons and hold modifier for strafe in local play |
 | Audio | ES8311 + PIO I2S with two static 512-frame DMA buffers and IRQ refill |
 | Game data | WAD preprocessed to compressed WHX and read directly from XIP flash at `0x10200000` |
 | Failure diagnostics | On-screen boot checkpoints and watchdog-scratch OOM reports |
 
 The SH8601 cannot exchange display axes in hardware, so landscape presentation
 is performed as a bounded tiled transpose rather than with a full rotated
-framebuffer. The 448×280 path uses two 20-row buffers: DMA reads one while
-core 1 packs the other. Repeated vertical scale rows are packed together, which
-keeps the full-width path above Doom's 35 Hz simulation rate without a full
-scaled framebuffer.
+framebuffer. The presentation path uses two 20-row buffers: DMA reads one while
+core 1 packs the other. Repeated vertical scale rows are packed together. At
+448×368, the last eight rows are assembled with 12 rows from the preceding
+buffer and sent as one overlapping full-size transaction. This fills the panel
+without a full scaled framebuffer or a third tile buffer.
 
-The F11 full-width effects-only build links with `__end__=0x2004930c`,
-leaving 224,500 bytes for DOOM's short-pointer zone up to `0x20080000`. The
+The F18 full-panel effects-only build links with `__end__=0x20049bf0`; after
+its fixed 2 KiB heap it leaves 220,176 bytes before core 1's stack boundary at
+`0x20080000`. Its installed UF2 SHA-256 is
+`5290ec3a571113cc2bb5c701a1c299413d7b9743183c5ecdd4769c26e0e6ac3a`. The
 zone's exact address matters: upstream compresses pointers into a fixed 256 KiB
 window, so ordinary heap allocation cannot be substituted casually.
 
@@ -260,6 +290,13 @@ cycles. The important milestones were:
 10. **Playable touch-control pass** — repaired FT3168 Active/coherent tracking,
     tuned pointing-finger move/turn curves, rejected unreliable tilt movement,
     and added deterministic corner double-tap strafe bursts.
+11. **Thumb-first complete controls** — adopted fixed asymmetric touch zones,
+    restored Use and menu/intermission routing, and safely added PWR Escape,
+    BOOT weapon cycling, and BOOT-hold strafing.
+12. **Full-panel experience** — advanced through 448×320 and exact-4:3 448×336,
+    then hardware-accepted 448×368 as the preferred core experience without
+    adding static presentation memory; its final one-minute combat capture
+    measured 34.3 FPS with zero display-DMA timeouts.
 
 The detailed investigation—including failed hypotheses, hardware gotchas,
 memory addresses, and root-cause evidence—is preserved in
@@ -292,14 +329,10 @@ that should not be committed.
 
 - Repeat the successful E1M1-to-E1M2 run; the earlier silent freeze has not
   appeared in the latest run but is not formally closed yet.
-- Audit essential Doom actions, especially weapon selection, then choose the
-  smallest gesture vocabulary that remains usable during combat.
-- Tune the F11 corner-strafe burst and quadratic forward/back curve only if a
-  short combat test identifies a clear problem.
-- Design an Escape/menu gesture using PWR or touch; never read BOOT in the
-  playable firmware.
-- Measure a 448×336 traditional 4:3-corrected display candidate before deciding
-  whether reducing the top/bottom bars is worth its additional pixel work.
+- Refine F18 sensitivity, guide styling, and zone geometry only through
+  isolated comparisons; essential actions are covered.
+- A/B test the promising menu-only swipe interaction against fixed-zone menu
+  navigation without changing gameplay or intermission controls.
 - Improve the optional music timbre before reconsidering music as the default.
 - Revisit the WHX configuration before supporting retail multi-episode WADs.
 - Investigate a small launcher plus independent flash slots for DOOM and a

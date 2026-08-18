@@ -71,6 +71,9 @@
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include "pico/time.h"
+#if DOOM_BOOT_NEXT_WEAPON
+#include "pico/flash.h"
+#endif
 #include "hardware/gpio.h"
 #if DOOM_ENABLE_PROFILING
 #include "hardware/flash.h"
@@ -85,6 +88,9 @@
 #include "DEV_Config.h"
 #include "qspi_pio.h"
 #include "AMOLED_1in8.h"
+#if DOOM_TOUCH_DPAD_OVERLAY
+#include "touch_dpad.h"
+#endif
 #if PICO_RP2350
 #include "hardware/structs/accessctrl.h"
 #endif
@@ -95,6 +101,15 @@ volatile uint8_t interp_in_use; // referenced by pd_render.cpp; we never set it,
 
 // display has been set up?
 static boolean initialized = false;
+
+#if DOOM_BOOT_NEXT_WEAPON
+static volatile boolean boot_input_flash_safe_ready = false;
+
+boolean I_BootInputFlashSafeReady(void)
+{
+    return boot_input_flash_safe_ready;
+}
+#endif
 
 boolean screenvisible = true;
 
@@ -560,7 +575,9 @@ static void new_frame_stuff(void) {
 // palette and overlays once per source row, optionally scales it, transposes it
 // into portrait-addressed tiles, and sends tightly packed RGB565 over QSPI.
 // Keeping output size here means the renderer and its memory-heavy tables stay
-// unchanged while 320x200, 384x240, 416x260, and 448x280 can be compared.
+// unchanged while output sizes up to the panel's native 448x368 can be
+// compared. Wider-than-16:10 modes deliberately expand the vertical scale;
+// they do not increase the renderer's 320x200 memory footprint.
 
 #define DISPLAY_WIDTH       DOOM_DISPLAY_WIDTH
 #define DISPLAY_HEIGHT      DOOM_DISPLAY_HEIGHT
@@ -568,19 +585,24 @@ static void new_frame_stuff(void) {
 #define DOOM_VIEW_Y_OFFSET  ((AMOLED_1IN8_WIDTH - DISPLAY_HEIGHT) / 2)
 
 static_assert(DISPLAY_WIDTH >= SCREENWIDTH, "AMOLED output cannot downscale");
+static_assert(DISPLAY_HEIGHT >= SCREENHEIGHT, "AMOLED output cannot downscale");
 static_assert(DISPLAY_WIDTH <= AMOLED_1IN8_HEIGHT, "AMOLED output too wide");
 static_assert(DISPLAY_HEIGHT <= AMOLED_1IN8_WIDTH, "AMOLED output too tall");
-static_assert(DISPLAY_WIDTH * SCREENHEIGHT ==
-              DISPLAY_HEIGHT * SCREENWIDTH, "output must remain 16:10");
 
 // Forty rows is the hardware-proven default. Smaller experimental tiles can
 // shorten the strided writes and recover SRAM, but the first 8-row hardware
 // build produced a black panel. Keep tile height selectable for controlled
 // driver work without exposing that failed candidate as the default.
 #define PANEL_CHUNK_ROWS DOOM_PANEL_CHUNK_ROWS
+#define PANEL_FINAL_ROWS (DISPLAY_HEIGHT % PANEL_CHUNK_ROWS)
+#define PANEL_FINAL_PADDING \
+    ((PANEL_CHUNK_ROWS - PANEL_FINAL_ROWS) % PANEL_CHUNK_ROWS)
 static_assert(PANEL_CHUNK_ROWS > 0, "transpose tile must contain rows");
-static_assert((DISPLAY_HEIGHT % PANEL_CHUNK_ROWS) == 0,
-              "output height must be divisible by transpose tile height");
+static_assert(PANEL_FINAL_ROWS == 0 ||
+              DOOM_VIEW_Y_OFFSET >= PANEL_FINAL_PADDING ||
+              (DISPLAY_HEIGHT == AMOLED_1IN8_WIDTH &&
+               PANEL_CHUNK_ROWS == 20 && DOOM_ASYNC_AMOLED),
+              "partial tile needs border padding or async full-panel overlap");
 
 #if DOOM_ASYNC_AMOLED
 static_assert(PANEL_CHUNK_ROWS == 20,
@@ -590,6 +612,87 @@ static_assert(PANEL_CHUNK_ROWS == 20,
 static UWORD panel_chunks[2][PANEL_CHUNK_ROWS * DISPLAY_WIDTH];
 #else
 static UWORD panel_chunks[1][PANEL_CHUNK_ROWS * DISPLAY_WIDTH];
+#endif
+
+#if DOOM_TOUCH_DPAD_OVERLAY
+#define DPAD_OVERLAY_DIM RGB565_FROM_RGB8(92, 92, 92)
+#define DPAD_OVERLAY_ACTIVE RGB565_FROM_RGB8(224, 194, 64)
+
+static inline void dpad_overlay_pixel(int pack_buffer, int output_y,
+                                      int x, UWORD color)
+{
+    if (x < 0 || x >= DISPLAY_WIDTH) return;
+    int chunk_row = output_y % PANEL_CHUNK_ROWS;
+    panel_chunks[pack_buffer][x * PANEL_CHUNK_ROWS
+                              + (PANEL_CHUNK_ROWS - chunk_row - 1)] =
+        __builtin_bswap16(color);
+}
+
+static void dpad_overlay_rect_row(int pack_buffer, int output_y,
+                                  int x0, int y0, int x1, int y1,
+                                  int thickness, UWORD color)
+{
+    int y = DOOM_VIEW_Y_OFFSET + output_y;
+    if (y < y0 || y >= y1) return;
+
+    if (y < y0 + thickness || y >= y1 - thickness) {
+        for (int x = x0; x < x1; x++) {
+            dpad_overlay_pixel(pack_buffer, output_y, x, color);
+        }
+        return;
+    }
+
+    for (int edge = 0; edge < thickness; edge++) {
+        dpad_overlay_pixel(pack_buffer, output_y, x0 + edge, color);
+        dpad_overlay_pixel(pack_buffer, output_y, x1 - edge - 1, color);
+    }
+}
+
+static bool dpad_zone_uses(touch_dpad_zone_t active,
+                           touch_dpad_zone_t primary)
+{
+    if (active == primary) return true;
+    if (active == TOUCH_DPAD_ZONE_UP_LEFT) {
+        return primary == TOUCH_DPAD_ZONE_UP || primary == TOUCH_DPAD_ZONE_LEFT;
+    }
+    if (active == TOUCH_DPAD_ZONE_UP_RIGHT) {
+        return primary == TOUCH_DPAD_ZONE_UP || primary == TOUCH_DPAD_ZONE_RIGHT;
+    }
+    return false;
+}
+
+static void apply_dpad_overlay_row(int pack_buffer, int output_y)
+{
+    touch_dpad_zone_t active = I_GetTouchDpadZone();
+    const struct {
+        int x0, y0, x1, y1;
+        touch_dpad_zone_t zone;
+    } boxes[] = {
+        { 0, TOUCH_DPAD_Y_MIN, TOUCH_DPAD_LEFT_X, TOUCH_DPAD_DOWN_Y,
+          TOUCH_DPAD_ZONE_LEFT },
+        { TOUCH_DPAD_LEFT_X, TOUCH_DPAD_Y_MIN,
+          TOUCH_DPAD_UP_X, TOUCH_DPAD_DOWN_Y, TOUCH_DPAD_ZONE_UP },
+        { TOUCH_DPAD_UP_X, TOUCH_DPAD_Y_MIN,
+          TOUCH_DPAD_X_MAX, TOUCH_DPAD_DOWN_Y, TOUCH_DPAD_ZONE_RIGHT },
+        { 0, TOUCH_DPAD_DOWN_Y, TOUCH_DPAD_X_MAX, AMOLED_1IN8_WIDTH,
+          TOUCH_DPAD_ZONE_DOWN },
+    };
+
+    for (unsigned i = 0; i < sizeof(boxes) / sizeof(boxes[0]); i++) {
+        dpad_overlay_rect_row(pack_buffer, output_y,
+                              boxes[i].x0, boxes[i].y0,
+                              boxes[i].x1, boxes[i].y1,
+                              1, DPAD_OVERLAY_DIM);
+    }
+    for (unsigned i = 0; i < sizeof(boxes) / sizeof(boxes[0]); i++) {
+        if (dpad_zone_uses(active, boxes[i].zone)) {
+            dpad_overlay_rect_row(pack_buffer, output_y,
+                                  boxes[i].x0, boxes[i].y0,
+                                  boxes[i].x1, boxes[i].y1,
+                                  2, DPAD_OVERLAY_ACTIVE);
+        }
+    }
+}
 #endif
 
 #if DOOM_ENABLE_PROFILING
@@ -892,16 +995,26 @@ static void profile_finish_frame(uint32_t frame_start_us,
 static void clear_panel_background(void)
 {
     // Clear all panel GRAM once so the larger previous build cannot remain
-    // visible around the new 320x200 window. Reuse the runtime tile and split
-    // the portrait panel into the widest full-height stripes that fit.
+    // visible around the game window. Reuse the runtime tile and split the
+    // portrait panel into the widest full-height stripes that fit. Always end
+    // with a full-size transaction, overlapping the previous stripe when the
+    // 368-pixel panel axis is not divisible by the stripe width. The controller
+    // has already produced a black screen with an 8-row transaction; avoiding
+    // the same short tail here also prevents stale GRAM at the panel edge.
     UWORD *panel_chunk = panel_chunks[0];
     memset(panel_chunk, 0, sizeof(panel_chunks[0]));
     const int stripe_width = (PANEL_CHUNK_ROWS * DISPLAY_WIDTH) / AMOLED_1IN8_HEIGHT;
-    for (int x = 0; x < AMOLED_1IN8_WIDTH; x += stripe_width) {
+    int x = 0;
+    while (x < AMOLED_1IN8_WIDTH) {
         int xend = x + stripe_width;
-        if (xend > AMOLED_1IN8_WIDTH) xend = AMOLED_1IN8_WIDTH;
+        if (xend >= AMOLED_1IN8_WIDTH) {
+            x = AMOLED_1IN8_WIDTH - stripe_width;
+            xend = AMOLED_1IN8_WIDTH;
+        }
         AMOLED_1IN8_DisplayWindowPacked(x, 0, xend, AMOLED_1IN8_HEIGHT,
                                          panel_chunk);
+        if (xend == AMOLED_1IN8_WIDTH) break;
+        x = xend;
     }
 }
 
@@ -1057,12 +1170,12 @@ static void present_frame_to_amoled(void) {
         assert(output_x == DISPLAY_WIDTH);
 
         vertical_accumulator += DISPLAY_HEIGHT;
-        // At 448x280, 80 of the 200 source rows are emitted twice. Pack both
-        // adjacent output rows in one x loop whenever they stay in the same
-        // tile. This loads each scaled pixel once and removes one complete
-        // 448-iteration strided loop, without another row buffer or any image
-        // change. Fall back to the single-row path when the first copy closes
-        // the current tile.
+        // For the current scaled modes, some source rows are emitted twice
+        // (80 at 448x280 and 120 at 448x320). Pack both adjacent output rows in
+        // one x loop whenever they stay in the same tile. This loads each
+        // scaled pixel once and removes one complete 448-iteration strided
+        // loop, without another row buffer or any image change. Fall back to
+        // the single-row path when the first copy closes the current tile.
         if (vertical_accumulator >= SCREENHEIGHT * 2 &&
             (output_y % PANEL_CHUNK_ROWS) != PANEL_CHUNK_ROWS - 1) {
             int chunk_row = output_y % PANEL_CHUNK_ROWS;
@@ -1076,6 +1189,10 @@ static void present_frame_to_amoled(void) {
                 first += PANEL_CHUNK_ROWS;
                 second += PANEL_CHUNK_ROWS;
             }
+#if DOOM_TOUCH_DPAD_OVERLAY
+            apply_dpad_overlay_row(pack_buffer, output_y);
+            apply_dpad_overlay_row(pack_buffer, output_y + 1);
+#endif
             output_y += 2;
             vertical_accumulator -= SCREENHEIGHT * 2;
             pack_buffer = flush_completed_chunk(output_y - 1, pack_buffer
@@ -1095,6 +1212,9 @@ static void present_frame_to_amoled(void) {
                                           + (PANEL_CHUNK_ROWS - chunk_row - 1)] =
                     scaled_row[x];
             }
+#if DOOM_TOUCH_DPAD_OVERLAY
+            apply_dpad_overlay_row(pack_buffer, output_y);
+#endif
             pack_buffer = flush_completed_chunk(output_y, pack_buffer
 #if DOOM_ASYNC_AMOLED
                                                  , &transfer_pending
@@ -1110,6 +1230,78 @@ static void present_frame_to_amoled(void) {
     }
 #if DISPLAY_WIDTH != SCREENWIDTH
     assert(output_y == DISPLAY_HEIGHT);
+#endif
+#if PANEL_FINAL_ROWS != 0
+#if DISPLAY_HEIGHT == AMOLED_1IN8_WIDTH
+    // Native-height 448x368 has no border in which to hide 12 padding rows,
+    // while short panel transactions are not hardware-proven. The preceding
+    // completed buffer still holds output rows 340..359. Once its DMA finishes,
+    // combine its last 12 rows with the current buffer's rows 360..367 and
+    // resend rows 348..367 as one known-good 20-row transaction at panel x=0.
+    // This overlaps 12 already-presented rows but requires no third tile buffer.
+    static_assert(DOOM_ASYNC_AMOLED && PANEL_CHUNK_ROWS == 20 &&
+                  PANEL_FINAL_ROWS == 8 && PANEL_FINAL_PADDING == 12,
+                  "full-panel tail assembly is the bounded 448x368/20 case");
+#if DOOM_ENABLE_PROFILING
+    uint32_t tail_wait_started_us = time_us_32();
+#endif
+    assert(transfer_pending);
+    AMOLED_1IN8_DisplayWindowPackedWait();
+#if DOOM_ENABLE_PROFILING
+    transfer_us += time_us_32() - tail_wait_started_us;
+#endif
+    I_UpdateSound();
+    transfer_pending = false;
+
+    int previous_buffer = pack_buffer ^ 1;
+    for (int x = 0; x < DISPLAY_WIDTH; x++) {
+        UWORD *current = &panel_chunks[pack_buffer][x * PANEL_CHUNK_ROWS];
+        const UWORD *previous =
+            &panel_chunks[previous_buffer][x * PANEL_CHUNK_ROWS];
+
+        // Move output rows 360..367 from indices 19..12 to 7..0.
+        for (int row = 0; row < PANEL_FINAL_ROWS; row++) {
+            current[PANEL_FINAL_ROWS - row - 1] =
+                current[PANEL_CHUNK_ROWS - row - 1];
+        }
+        // Copy output rows 348..359 from previous indices 11..0 to 19..8.
+        for (int row = 0; row < PANEL_FINAL_PADDING; row++) {
+            current[PANEL_CHUNK_ROWS - row - 1] =
+                previous[PANEL_FINAL_PADDING - row - 1];
+        }
+    }
+
+#if DOOM_ENABLE_PROFILING
+    uint32_t tail_submit_started_us = time_us_32();
+#endif
+    AMOLED_1IN8_DisplayWindowPackedStart(
+        0, DOOM_VIEW_X_OFFSET,
+        PANEL_CHUNK_ROWS, DOOM_VIEW_X_OFFSET + DISPLAY_WIDTH,
+        panel_chunks[pack_buffer]);
+    transfer_pending = true;
+#if DOOM_ENABLE_PROFILING
+    transfer_us += time_us_32() - tail_submit_started_us;
+#endif
+#else
+    // 448x336 ends with 16 image rows in a 20-row transpose buffer. Preserve
+    // the proven panel transaction size: clear the four unused low indices,
+    // then submit a normal 20-row tile beginning four pixels inside the black
+    // border. The 16 reversed image rows still land exactly at view offset 16.
+    for (int x = 0; x < DISPLAY_WIDTH; x++) {
+        for (int padding = 0; padding < PANEL_FINAL_PADDING; padding++) {
+            panel_chunks[pack_buffer][x * PANEL_CHUNK_ROWS + padding] = 0;
+        }
+    }
+    pack_buffer = flush_completed_chunk(
+        DISPLAY_HEIGHT + PANEL_FINAL_PADDING - 1, pack_buffer
+#if DOOM_ASYNC_AMOLED
+        , &transfer_pending
+#endif
+#if DOOM_ENABLE_PROFILING
+        , &transfer_us
+#endif
+    );
+#endif
 #endif
 #if DOOM_ASYNC_AMOLED
     if (transfer_pending) {
@@ -1137,6 +1329,11 @@ static void present_frame_to_amoled(void) {
 // waits) completely unchanged. What's gone is scanvideo_setup()/the DVI
 // IRQ - replaced with a direct call to present the frame once it's ready.
 static void core1(void) {
+#if DOOM_BOOT_NEXT_WEAPON
+    // flash_safe_execute() on core0 may proceed only after the other core has
+    // registered its lockout handler. A failure leaves BOOT input disabled.
+    boot_input_flash_safe_ready = flash_safe_execute_core_init();
+#endif
     sem_release(&core1_launch);
     while (true) {
 #if DOOM_ENABLE_PROFILING

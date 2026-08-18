@@ -450,6 +450,21 @@ static void I_Pico_ShutdownSound(void)
 
 static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
 {
+#if DOOM_BOOT_GATE_AUDIO_DISABLED
+    // Gate B is intentionally silent. DEV_GPIO_Init() already keeps PA_CTRL
+    // low; reaffirm it here and leave every I2S pin as a high-impedance input.
+    // Do not touch the codec, PIO state machines, or audio DMA.
+    gpio_init(PA_CTRL);
+    gpio_set_dir(PA_CTRL, GPIO_OUT);
+    gpio_put(PA_CTRL, 0);
+    for (uint pin = PICO_AUDIO_DOUT; pin <= PICO_AUDIO_BCLK; ++pin) {
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_IN);
+        gpio_disable_pulls(pin);
+    }
+    return false;
+#endif
+
     use_sfx_prefix = _use_sfx_prefix;
 
     pico_audio.channel_count = 1;

@@ -11,8 +11,25 @@
 - [x] Replace BOOT long-press with a debounced single press that emits Escape once per hold.
 - [x] Abandon and remove all runtime BOOT polling after both BOOT-enabled tests behaved abnormally.
 - [x] Prototype long PWR press as Escape/menu without reading BOOT at runtime (rejected after it conflicted with firing and preceded an apparent physical restart).
-- [ ] Design Escape/menu without BOOT or any PWR hold gesture; defer until movement feels good.
-- [ ] Later, if still useful, isolate BOOT-as-input in a single-core audio-disabled test using the SDK's `flash_safe_execute()` API; not a current priority.
+- [x] Implement F12 short PWR hold: fire once immediately, emit Escape once at 450ms, and suppress the completed press cycle through release.
+- [x] Hardware-test F12 in-level tap/hold behaviour (worked: immediate one-shot fire and short hold opened Escape/menu).
+- [x] Hardware-test release-resolved F12.1 (Fire and Escape feel very comfortable in gameplay and menus; very fast click-click can collapse into one shot).
+- [x] Implement F12.2 bounded PWR pulse queue with one sampled low tic between rapid shots and queue flush before Escape.
+- [x] Hardware-test F12.2 rapid Fire (paced pairs work, but the fastest click-click still collapses into one shot).
+- [x] Implement F12.3 preservation of a coalesced active-tap release plus next press.
+- [x] Hardware-test F12.3 fastest click-click (no practical improvement; middle-speed pulses can expire during the pistol's 14-tic recovery, while extreme complete cycles may still coalesce at the PMIC).
+- [x] Complete the BOOT safety audit covering the exact schematic, flash-CS electrical path, SDK contract, CPU/XIP/DMA interactions, and staged physical protocol.
+- [x] Build the isolated single-core BOOT safety probe with amplifier/display disabled and no DMA/I2C/PIO/audio/core1/USB stdio.
+- [x] Hardware-test exactly one short BOOT press/release with the isolated probe (passed: entered ROM BOOTSEL cleanly), then restore and reboot F14.1.
+- [x] After the probe passed, move audio DMA's flash-backed silence source to SRAM, register Doom core1 with `flash_safe_execute_core_init()`, and build/audit an audio-disabled default-off next-weapon candidate.
+- [x] Hardware-test one release-based next-weapon event in audio-disabled Doom, then restore exact F14.1 (passed; one weapon change and no abnormal behaviour).
+- [x] Build and statically audit a separately gated effects-enabled BOOT candidate with every active DMA source in SRAM.
+- [x] Hardware-test one release-based next-weapon event with normal sound effects (passed; weapon cycling worked well and everything appeared normal).
+- [x] Build and statically audit a default-off BOOT-hold strafe modifier while
+  preserving byte-identical F15 when disabled.
+- [x] Hardware-test one bounded F15.1 sequence: short BOOT next-weapon, held
+  BOOT plus LEFT/RIGHT strafe, release-to-turn, normal SFX, and no abnormality
+  (passed; accepted as F16 and reported to work great).
 - [x] Preserve the floating swipe-and-hold controls as documented Control Model A.
 - [x] Introduce a compile-selectable hybrid control model without changing Model A's fallback behavior.
 - [x] Prototype QMI8658 accelerometer tilt with neutral calibration, dead zone, fixed-point filtering, and proportional output (rejected: useful movement required too much tilt).
@@ -49,9 +66,20 @@
 - [x] Replace the 88px linear forward/back response with a calmer 140px quadratic ramp.
 - [x] Perform an initial F11 hardware check (corner strafe works and is better than no strafe; detailed tuning deferred).
 - [ ] Hardware-test F11 corner direction/burst length, door Use outside corners, and low/mid/far forward speed.
-- [ ] Audit essential Doom actions before closing controls: weapon change first, then Escape/menu; treat automap and direct weapon numbers as optional.
-- [ ] Prototype the smallest deliberate weapon-cycle gesture; compare top-corner previous/next double taps with a stationary long-touch action.
-- [ ] If broad-thumb support remains important after pointing-finger tuning, prototype a fixed bottom-left eight-way touch-and-hold D-pad with initial-touch activation.
+- [x] Audit essential Doom actions: Escape/menu and next-weapon are now covered; automap and direct weapon numbers remain optional.
+- [x] Select the smallest deliberate weapon-cycle action: one release-only BOOT press, avoiding more overlapping touch vocabulary.
+- [x] Implement F13 fixed bottom-left eight-way touch-and-hold D-pad with immediate absolute-position activation and normal/fast radial response.
+- [x] Hardware-compare F13 D-pad against the accepted pointing-finger model (directionally accepted: more traditional, controllable, and thumb-friendly).
+- [x] Implement F14 asymmetric contiguous thumb zones with edge-sized LEFT/DOWN, larger UP/RIGHT, deliberate forward-turn transition bands, and a compile-time diagnostic overlay.
+- [x] Hardware-tune F14 geometry (best control result so far; thumb reach, cardinals, release-to-stop, overlay, and both forward diagonals passed; diagonals remain refinable).
+- [x] Allow bounded stationary Use/Open double taps inside all F14 control zones without delaying held movement.
+- [x] Hardware-test F14.1 in-zone Use (works well; accepted for continued play).
+- [x] Hardware-test F17 state-consistent input: fixed D-pad in menus, a fresh
+  D-pad/PWR press advances the E1M1 score screen into E1M2, and DOWN again
+  occupies only 20 visible game-image pixels at 448x336 (passed; issue fixed).
+- [ ] A/B test an explicitly menu-only swipe mode against F17 fixed-zone menu
+  navigation; do not change gameplay or intermission routing.
+- [ ] Explore a polished permanent visual treatment for the helpful control guides after interaction mapping is locked.
 - [x] After touch-only controls are locked, decide whether motion still earns a role (no continuous tilt after F10; use explicit touch dodge gestures).
 - [x] Do not add a recenter action after continuous roll control was rejected.
 
@@ -91,7 +119,26 @@
 - [x] Decide whether a wholesale display rewrite is needed (no: targeted pipelining reached 35.2 FPS full-width).
 - [ ] After instrumentation isolates the remaining freeze, perform a phased refactor of display, input, audio, and diagnostics behind unchanged interfaces.
 - [ ] Audit linker-map/static buffers and remove measured duplication or dead code one change at a time, recording SRAM and frame-time deltas.
-- [ ] Add a selectable 448x336 4:3-corrected output candidate and measure FPS, audio pacing, and memory against locked 448x280 before considering it permanent.
+- [x] Add a selectable memory-neutral 448x320 stepping-stone that preserves the
+  proven 20-row asynchronous presenter and exact F16 AUTO rollback.
+- [x] Hardware-check 448x320 image, guides, effects audio, and a short E1M1 run
+  (passed; Alexander judged it excellent and visually much better).
+- [x] Add bounded partial-final-tile support for an exact-4:3 448x336 candidate
+  while preserving the 20-row transaction and all static-memory headroom.
+- [x] Hardware-check 448x336 image, guides, effects audio, and a short E1M1 run
+  (passed; looks good, feels very smooth, no perceptible loss versus 448x320).
+- [x] Retire the planned 448x336 gate after F18 won the direct experience test;
+  retain 448x336 as the exact-4:3 rollback.
+- [x] Build a memory-neutral asynchronous 448x368 experiment with a full
+  overlapping 20-row tail instead of an unproven 8-row transaction.
+- [x] Make the one-time panel clear end with a full overlapping stripe instead
+  of a short 8-row transfer.
+- [x] Hardware-check and accept F18 full-panel presentation as the core
+  experience; Alexander loves the result and reported it feels really good.
+- [x] Capture one bounded 448x368 combat performance report for the permanent
+  baseline record (34.3 FPS over 60.021 seconds; zero DMA timeouts); retain F18.
+- [ ] If any coloured edge remnant reappears, photograph it before changing
+  panel initialisation or addressing; none was reported during F18 acceptance.
 
 ## Future ports and launcher
 

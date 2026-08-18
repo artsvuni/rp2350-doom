@@ -16,6 +16,18 @@ option(DOOM_ENABLE_PROFILING "Capture a bounded reset-persistent performance rep
 option(DOOM_ASYNC_AMOLED "Overlap AMOLED DMA with presentation packing" OFF)
 option(DOOM_HYBRID_CONTROLS
     "Use two-axis touch movement/turning and tap PWR fire" OFF)
+option(DOOM_TOUCH_DPAD
+    "Use a fixed eight-way bottom-left D-pad instead of floating touch" OFF)
+option(DOOM_TOUCH_DPAD_THUMB_ZONES
+    "Use asymmetric thumb zones instead of the radial D-pad" OFF)
+option(DOOM_TOUCH_DPAD_OVERLAY
+    "Draw temporary D-pad outlines and active-zone highlight" OFF)
+option(DOOM_BOOT_NEXT_WEAPON
+    "Safety-gated BOOT release cycles to Doom's next weapon" OFF)
+option(DOOM_BOOT_HOLD_STRAFE
+    "Holding BOOT makes thumb-zone left/right strafe" OFF)
+option(DOOM_BOOT_WITH_SOUND_EFFECTS
+    "Gate C only: retain sound effects while BOOT next-weapon is enabled" OFF)
 option(DOOM_ROLL_STRAFE
     "Add experimental accelerometer roll strafing to hybrid controls" OFF)
 set(DOOM_PROFILE_CAPTURE_SECONDS "60" CACHE STRING
@@ -23,6 +35,10 @@ set(DOOM_PROFILE_CAPTURE_SECONDS "60" CACHE STRING
 set(DOOM_DISPLAY_WIDTH "320" CACHE STRING
     "Landscape Doom output width: 320, 384, 416, or 448")
 set_property(CACHE DOOM_DISPLAY_WIDTH PROPERTY STRINGS 320 384 416 448)
+set(DOOM_DISPLAY_HEIGHT_OVERRIDE "AUTO" CACHE STRING
+    "Optional 448-wide output height: AUTO, 280, 320, 336, or 368")
+set_property(CACHE DOOM_DISPLAY_HEIGHT_OVERRIDE PROPERTY STRINGS
+    AUTO 280 320 336 368)
 set(DOOM_PANEL_CHUNK_ROWS "40" CACHE STRING
     "Transpose tile height: AUTO, 8, 10, 20, or 40")
 set_property(CACHE DOOM_PANEL_CHUNK_ROWS PROPERTY STRINGS AUTO 8 10 20 40)
@@ -38,6 +54,18 @@ elseif(DOOM_DISPLAY_WIDTH STREQUAL "448")
 else()
     message(FATAL_ERROR
         "DOOM_DISPLAY_WIDTH must be one of 320, 384, 416, or 448")
+endif()
+
+if(NOT DOOM_DISPLAY_HEIGHT_OVERRIDE STREQUAL "AUTO")
+    if(NOT DOOM_DISPLAY_WIDTH STREQUAL "448")
+        message(FATAL_ERROR
+            "DOOM_DISPLAY_HEIGHT_OVERRIDE is only supported at 448px width")
+    endif()
+    if(NOT DOOM_DISPLAY_HEIGHT_OVERRIDE MATCHES "^(280|320|336|368)$")
+        message(FATAL_ERROR
+            "DOOM_DISPLAY_HEIGHT_OVERRIDE must be AUTO, 280, 320, 336, or 368")
+    endif()
+    set(DOOM_DISPLAY_HEIGHT ${DOOM_DISPLAY_HEIGHT_OVERRIDE})
 endif()
 
 if(DOOM_PANEL_CHUNK_ROWS STREQUAL "AUTO")
@@ -58,15 +86,70 @@ endif()
 math(EXPR DOOM_PANEL_CHUNK_REMAINDER
     "${DOOM_DISPLAY_HEIGHT} % ${DOOM_PANEL_CHUNK_ROWS_RESOLVED}")
 if(NOT DOOM_PANEL_CHUNK_REMAINDER EQUAL 0)
-    message(FATAL_ERROR
-        "${DOOM_DISPLAY_HEIGHT} output rows must be divisible by "
-        "DOOM_PANEL_CHUNK_ROWS=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}")
+    if(DOOM_DISPLAY_HEIGHT EQUAL 336 AND
+       DOOM_PANEL_CHUNK_ROWS_RESOLVED EQUAL 20)
+        message(STATUS
+            "448x336 uses a padded final 16-row image tile in one 20-row "
+            "panel transaction")
+    elseif(DOOM_DISPLAY_HEIGHT EQUAL 368 AND
+           DOOM_PANEL_CHUNK_ROWS_RESOLVED EQUAL 20 AND
+           DOOM_ASYNC_AMOLED)
+        message(STATUS
+            "448x368 uses a final overlapping 20-row panel transaction "
+            "assembled from the existing asynchronous buffers")
+    else()
+        message(FATAL_ERROR
+            "${DOOM_DISPLAY_HEIGHT} output rows must be divisible by "
+            "DOOM_PANEL_CHUNK_ROWS=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}; only "
+            "the bounded 448x336/20-row padded case and asynchronous "
+            "448x368/20-row overlapping case are supported")
+    endif()
 endif()
 
 if(DOOM_ASYNC_AMOLED AND NOT DOOM_PANEL_CHUNK_ROWS_RESOLVED EQUAL 20)
     message(FATAL_ERROR
         "DOOM_ASYNC_AMOLED requires DOOM_PANEL_CHUNK_ROWS=20 so two buffers "
         "use the same SRAM as the proven single 40-row buffer")
+endif()
+
+if(DOOM_TOUCH_DPAD AND NOT DOOM_HYBRID_CONTROLS)
+    message(FATAL_ERROR
+        "DOOM_TOUCH_DPAD requires DOOM_HYBRID_CONTROLS=ON")
+endif()
+
+if(DOOM_TOUCH_DPAD_THUMB_ZONES AND NOT DOOM_TOUCH_DPAD)
+    message(FATAL_ERROR
+        "DOOM_TOUCH_DPAD_THUMB_ZONES requires DOOM_TOUCH_DPAD=ON")
+endif()
+
+if(DOOM_TOUCH_DPAD_OVERLAY AND NOT DOOM_TOUCH_DPAD_THUMB_ZONES)
+    message(FATAL_ERROR
+        "DOOM_TOUCH_DPAD_OVERLAY requires DOOM_TOUCH_DPAD_THUMB_ZONES=ON")
+endif()
+
+if(DOOM_TOUCH_DPAD_OVERLAY AND NOT DOOM_DISPLAY_WIDTH STREQUAL "448")
+    message(FATAL_ERROR
+        "DOOM_TOUCH_DPAD_OVERLAY currently targets the 448px full-width view")
+endif()
+
+if(DOOM_BOOT_NEXT_WEAPON AND NOT DOOM_HYBRID_CONTROLS)
+    message(FATAL_ERROR
+        "DOOM_BOOT_NEXT_WEAPON is a Gate B extension of the hybrid controls")
+endif()
+
+if(DOOM_BOOT_HOLD_STRAFE AND NOT DOOM_BOOT_NEXT_WEAPON)
+    message(FATAL_ERROR
+        "DOOM_BOOT_HOLD_STRAFE requires DOOM_BOOT_NEXT_WEAPON=ON")
+endif()
+
+if(DOOM_BOOT_HOLD_STRAFE AND NOT DOOM_TOUCH_DPAD_THUMB_ZONES)
+    message(FATAL_ERROR
+        "DOOM_BOOT_HOLD_STRAFE currently requires the F14 thumb zones")
+endif()
+
+if(DOOM_BOOT_WITH_SOUND_EFFECTS AND NOT DOOM_BOOT_NEXT_WEAPON)
+    message(FATAL_ERROR
+        "DOOM_BOOT_WITH_SOUND_EFFECTS requires DOOM_BOOT_NEXT_WEAPON=ON")
 endif()
 
 if(NOT DOOM_PROFILE_CAPTURE_SECONDS MATCHES "^[1-9][0-9]*$")
@@ -76,7 +159,12 @@ endif()
 message(STATUS
     "Doom AMOLED output: ${DOOM_DISPLAY_WIDTH}x${DOOM_DISPLAY_HEIGHT}; "
     "tile=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}; async=${DOOM_ASYNC_AMOLED}; "
-    "profiling=${DOOM_ENABLE_PROFILING}")
+    "profiling=${DOOM_ENABLE_PROFILING}; dpad=${DOOM_TOUCH_DPAD}; "
+    "thumb_zones=${DOOM_TOUCH_DPAD_THUMB_ZONES}; "
+    "dpad_overlay=${DOOM_TOUCH_DPAD_OVERLAY}; "
+    "boot_next_weapon=${DOOM_BOOT_NEXT_WEAPON}; "
+    "boot_hold_strafe=${DOOM_BOOT_HOLD_STRAFE}; "
+    "boot_with_sfx=${DOOM_BOOT_WITH_SOUND_EFFECTS}")
 
 pico_sdk_init()
 
@@ -122,6 +210,7 @@ target_link_libraries(doom_firmware PRIVATE
     hardware_i2c
     hardware_pio
     hardware_dma
+    pico_flash
     m
 )
 
@@ -131,6 +220,41 @@ pico_enable_stdio_uart(doom_firmware 1)
 pico_add_extra_outputs(doom_firmware)
 
 # ---------------------------------------------------------------------------
+# boot_safety_probe: deliberately isolated first gate for runtime BOOT input.
+# It has no display, codec, amplifier, DMA, I2C, or multicore dependencies.
+# A confirmed short BOOT press/release reboots into ROM BOOTSEL so the host can
+# verify detection without trusting USB serial output. Do not replace this
+# target with a BOOT-reading Doom build until the physical probe has passed.
+# ---------------------------------------------------------------------------
+add_executable(boot_safety_probe)
+
+target_sources(boot_safety_probe PRIVATE
+    boot_safety_probe.c
+    lib/button/bootsel_button.c
+)
+
+target_include_directories(boot_safety_probe PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/lib/button
+)
+
+target_link_libraries(boot_safety_probe PRIVATE
+    pico_stdlib
+    pico_flash
+    hardware_gpio
+)
+
+target_compile_definitions(boot_safety_probe PRIVATE
+    # Return an error instead of asserting if the SDK cannot establish its
+    # flash-safe context. The probe skips that sample rather than guessing it
+    # was a button press.
+    PICO_FLASH_ASSERT_ON_UNSAFE=0
+)
+
+pico_enable_stdio_usb(boot_safety_probe 0)
+pico_enable_stdio_uart(boot_safety_probe 0)
+pico_add_extra_outputs(boot_safety_probe)
+
+# ---------------------------------------------------------------------------
 # doom: the actual game, adapted from kilograham/rp2040-doom (vendored under
 # engine/ - see engine/README or doom/docs/DECISIONS.md for what's upstream
 # vs. ours). Separate executable target from the calibration firmware above.
@@ -138,6 +262,15 @@ pico_add_extra_outputs(doom_firmware)
 add_subdirectory(lib/audio_pio)
 add_subdirectory(lib/es8311)
 add_subdirectory(lib/bootlog)
+
+if(DOOM_BOOT_NEXT_WEAPON)
+    # Every BOOT-enabled candidate must keep all possible audio-DMA sources in
+    # SRAM. Gate B additionally disables audio unless Gate C is explicitly ON.
+    target_compile_definitions(audio_pio PRIVATE DOOM_BOOT_FLASH_SAFE_DMA=1)
+    if(NOT DOOM_BOOT_WITH_SOUND_EFFECTS)
+        target_compile_definitions(config PRIVATE DOOM_BOOT_GATE_AUDIO_DISABLED=1)
+    endif()
+endif()
 
 add_executable(doom)
 
@@ -161,12 +294,20 @@ target_sources(doom PRIVATE
     engine/adpcm-xq/adpcm-lib.c
 )
 
+if(DOOM_BOOT_NEXT_WEAPON)
+    target_sources(doom PRIVATE lib/button/bootsel_button.c)
+endif()
+
 target_include_directories(doom PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/engine
     ${CMAKE_CURRENT_LIST_DIR}/engine/doom
     ${CMAKE_CURRENT_LIST_DIR}/engine/pico
     ${CMAKE_CURRENT_LIST_DIR}/engine/adpcm-xq
 )
+
+if(DOOM_BOOT_NEXT_WEAPON)
+    target_include_directories(doom PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/button)
+endif()
 
 target_link_libraries(doom PRIVATE
     config
@@ -190,12 +331,21 @@ target_link_libraries(doom PRIVATE
     m
 )
 
+if(DOOM_BOOT_NEXT_WEAPON)
+    target_link_libraries(doom PRIVATE pico_flash)
+endif()
+
 target_compile_definitions(doom PRIVATE
     DOOM_DISPLAY_WIDTH=${DOOM_DISPLAY_WIDTH}
     DOOM_DISPLAY_HEIGHT=${DOOM_DISPLAY_HEIGHT}
     DOOM_PANEL_CHUNK_ROWS=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}
     DOOM_ASYNC_AMOLED=$<BOOL:${DOOM_ASYNC_AMOLED}>
     DOOM_HYBRID_CONTROLS=$<BOOL:${DOOM_HYBRID_CONTROLS}>
+    DOOM_TOUCH_DPAD=$<BOOL:${DOOM_TOUCH_DPAD}>
+    DOOM_TOUCH_DPAD_THUMB_ZONES=$<BOOL:${DOOM_TOUCH_DPAD_THUMB_ZONES}>
+    DOOM_TOUCH_DPAD_OVERLAY=$<BOOL:${DOOM_TOUCH_DPAD_OVERLAY}>
+    DOOM_BOOT_NEXT_WEAPON=$<BOOL:${DOOM_BOOT_NEXT_WEAPON}>
+    DOOM_BOOT_HOLD_STRAFE=$<BOOL:${DOOM_BOOT_HOLD_STRAFE}>
     DOOM_ROLL_STRAFE=$<BOOL:${DOOM_ROLL_STRAFE}>
     PICODOOM_RENDER_NEWHOPE=1
     MERGE_DISTSCALE0_INTO_VIEWCOSSINANGLE=1
@@ -352,6 +502,20 @@ target_compile_definitions(doom PRIVATE
     # Sound effects use the non-blocking DMA/IRQ audio_pio queue. Optional
     # music, when enabled below, mixes through that same bounded queue.
 )
+
+if(DOOM_BOOT_NEXT_WEAPON)
+    target_compile_definitions(doom PRIVATE
+        # A failed core-safety handshake must skip the sample, not assert or
+        # guess at the physical button state.
+        PICO_FLASH_ASSERT_ON_UNSAFE=0
+    )
+    if(NOT DOOM_BOOT_WITH_SOUND_EFFECTS)
+        target_compile_definitions(doom PRIVATE
+            DOOM_BOOT_GATE_AUDIO_DISABLED=1
+            DEBUG_NO_SOUND=1
+        )
+    endif()
+endif()
 
 # Only the video flight recorder consumes this value. Keep it source-local so
 # changing an iterative capture from 60 to 20 seconds does not rebuild the

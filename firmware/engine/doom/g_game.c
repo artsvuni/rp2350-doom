@@ -366,6 +366,15 @@ static int G_NextWeapon(int direction)
     return weapon_order_table[i].weapon_num;
 }
 
+#if DOOM_BOOT_NEXT_WEAPON
+void G_QueueNextWeapon(void)
+{
+    // Preserve Doom's own weapon ownership, shareware, berserk and pending
+    // weapon rules by feeding the existing G_BuildTiccmd() path.
+    next_weapon = 1;
+}
+#endif
+
 //
 // G_BuildTiccmd
 // Builds a ticcmd from all of the available inputs

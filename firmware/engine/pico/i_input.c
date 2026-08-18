@@ -22,6 +22,9 @@
 //#include "SDL_keycode.h"
 #include <doom/sounds.h>
 #include <doom/s_sound.h>
+#if DOOM_BOOT_NEXT_WEAPON
+#include <doom/g_game.h>
+#endif
 #include "pico.h"
 #include "doomkeys.h"
 #include "doomtype.h"
@@ -35,12 +38,19 @@
 #include "m_controls.h"
 #include "hardware/uart.h"
 #include "pico/time.h"
+#if DOOM_BOOT_NEXT_WEAPON
+#include "pico/error.h"
+#include "bootsel_button.h"
+#endif
 #include "pwr_button.h"
 #include "DEV_Config.h"
 #include "FT3168.h"
 #include "qmi8658.h"
 #include "AMOLED_1in8.h"
 #include "bootlog.h"
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+#include "touch_dpad.h"
+#endif
 #include <stdlib.h>
 #if USB_SUPPORT
 #include "pico/binary_info.h"
@@ -530,10 +540,10 @@ static void pico_quit(void) {
 // keyup pulses spanning one tic - see PulseKey() below for why it takes two
 // calls (one tic) to do that rather than posting both events at once.
 //
-// BOOT is deliberately not read during gameplay. It shares the external
-// flash QSPI CS signal, and both hardware incidents occurred only in builds
-// that sampled it at runtime. Keep it exclusively for entering BOOTSEL while
-// powering/resetting the board.
+// Normal builds deliberately do not read BOOT during gameplay: it shares the
+// external flash QSPI CS signal. The isolated Gate B build may sample it only
+// through the SDK flash-safe path, after core1 registered for lockout, with
+// audio hardware disabled and only in a local single-player level.
 //
 // Control model selector. The original model uses four fixed invisible hold
 // zones (preserved below for instant fallback). The experimental model is a
@@ -666,10 +676,32 @@ static key_type_t PollTouchMovementKey(void)
 #define HYBRID_STRAFE_CORNER_HEIGHT_PX 72
 #define HYBRID_TOUCH_STRAFE_SPEED 32
 #define HYBRID_TOUCH_STRAFE_TICS 6
+#if DOOM_TOUCH_DPAD
+// Fixed 160x160 logical-pixel pad in the physical bottom-left. The centre is
+// 80px from both edges, so it can be found by resting a finger in the corner
+// and moving roughly one fingertip inward. Eight-way sectors combine forward
+// movement and turning; distance selects normal or fast response.
+#define HYBRID_DPAD_SIZE_PX 160
+#define HYBRID_DPAD_CENTER_X 80
+#define HYBRID_DPAD_CENTER_Y (AMOLED_1IN8_WIDTH - 80)
+#define HYBRID_DPAD_DEAD_ZONE_PX 12
+#define HYBRID_DPAD_FAST_RADIUS_PX 56
+#define HYBRID_DPAD_MOVE_NORMAL 25
+#define HYBRID_DPAD_MOVE_FAST 50
+#define HYBRID_DPAD_TURN_NORMAL 640
+#define HYBRID_DPAD_TURN_FAST 960
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+static volatile uint8_t hybrid_dpad_zone;
+#endif
+#endif
 static int16_t hybrid_turn;
 static int16_t hybrid_forward;
 static int16_t hybrid_touch_strafe;
 static uint8_t hybrid_touch_strafe_tics;
+#if DOOM_BOOT_HOLD_STRAFE
+static int16_t hybrid_boot_strafe;
+static bool boot_strafe_modifier;
+#endif
 
 typedef enum {
     HYBRID_TOUCH_ACTION_NONE,
@@ -733,6 +765,177 @@ static int16_t ScaleTouchMove(int dy)
     return dy < 0 ? (int16_t)scaled : (int16_t)-scaled;
 }
 
+#if DOOM_TOUCH_DPAD
+static bool HybridDpadContains(int x, int y)
+{
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+    return x >= 0 && x < TOUCH_DPAD_X_MAX
+        && y >= TOUCH_DPAD_Y_MIN && y < AMOLED_1IN8_WIDTH;
+#else
+    return x >= 0 && x < HYBRID_DPAD_SIZE_PX
+        && y >= AMOLED_1IN8_WIDTH - HYBRID_DPAD_SIZE_PX
+        && y < AMOLED_1IN8_WIDTH;
+#endif
+}
+
+#if DOOM_BOOT_HOLD_STRAFE
+static void ApplyHybridHorizontal(bool left)
+{
+    if (boot_strafe_modifier) {
+        hybrid_boot_strafe = left
+            ? -HYBRID_TOUCH_STRAFE_SPEED
+            : HYBRID_TOUCH_STRAFE_SPEED;
+    } else {
+        hybrid_turn = left
+            ? HYBRID_DPAD_TURN_NORMAL
+            : -HYBRID_DPAD_TURN_NORMAL;
+    }
+}
+#endif
+
+static void ApplyHybridDpad(int x, int y)
+{
+    hybrid_turn = 0;
+    hybrid_forward = 0;
+#if DOOM_BOOT_HOLD_STRAFE
+    hybrid_boot_strafe = 0;
+#endif
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+    hybrid_dpad_zone = TOUCH_DPAD_ZONE_NONE;
+#endif
+
+    if (!HybridDpadContains(x, y)) return;
+
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+    if (y >= TOUCH_DPAD_DOWN_Y) {
+        hybrid_forward = -HYBRID_DPAD_MOVE_NORMAL;
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_DOWN;
+        return;
+    }
+
+    if (x >= TOUCH_DPAD_LEFT_X - TOUCH_DPAD_DIAGONAL_HALF_WIDTH
+        && x < TOUCH_DPAD_LEFT_X + TOUCH_DPAD_DIAGONAL_HALF_WIDTH) {
+        hybrid_forward = HYBRID_DPAD_MOVE_NORMAL;
+#if DOOM_BOOT_HOLD_STRAFE
+        ApplyHybridHorizontal(true);
+#else
+        hybrid_turn = HYBRID_DPAD_TURN_NORMAL;
+#endif
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_UP_LEFT;
+    } else if (x >= TOUCH_DPAD_UP_X - TOUCH_DPAD_DIAGONAL_HALF_WIDTH
+               && x < TOUCH_DPAD_UP_X + TOUCH_DPAD_DIAGONAL_HALF_WIDTH) {
+        hybrid_forward = HYBRID_DPAD_MOVE_NORMAL;
+#if DOOM_BOOT_HOLD_STRAFE
+        ApplyHybridHorizontal(false);
+#else
+        hybrid_turn = -HYBRID_DPAD_TURN_NORMAL;
+#endif
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_UP_RIGHT;
+    } else if (x < TOUCH_DPAD_LEFT_X) {
+#if DOOM_BOOT_HOLD_STRAFE
+        ApplyHybridHorizontal(true);
+#else
+        hybrid_turn = HYBRID_DPAD_TURN_NORMAL;
+#endif
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_LEFT;
+    } else if (x < TOUCH_DPAD_UP_X) {
+        hybrid_forward = HYBRID_DPAD_MOVE_NORMAL;
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_UP;
+    } else {
+#if DOOM_BOOT_HOLD_STRAFE
+        ApplyHybridHorizontal(false);
+#else
+        hybrid_turn = -HYBRID_DPAD_TURN_NORMAL;
+#endif
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_RIGHT;
+    }
+#else
+    int dx = x - HYBRID_DPAD_CENTER_X;
+    int dy = HYBRID_DPAD_CENTER_Y - y;
+    int ax = abs(dx);
+    int ay = abs(dy);
+    int radius = ax > ay ? ax : ay;
+    if (radius <= HYBRID_DPAD_DEAD_ZONE_PX) return;
+
+    bool fast = radius >= HYBRID_DPAD_FAST_RADIUS_PX;
+    int move = fast ? HYBRID_DPAD_MOVE_FAST : HYBRID_DPAD_MOVE_NORMAL;
+    int turn = fast ? HYBRID_DPAD_TURN_FAST : HYBRID_DPAD_TURN_NORMAL;
+
+    // Approximate eight equal 45-degree sectors without floating point.
+    // A component less than tan(22.5 degrees) of the dominant component is
+    // omitted; the remaining corners command movement and turning together.
+    bool vertical = ay * 12 >= ax * 5;
+    bool horizontal = ax * 12 >= ay * 5;
+    if (vertical) hybrid_forward = dy > 0 ? move : -move;
+    if (horizontal) hybrid_turn = dx > 0 ? -turn : turn;
+#endif
+}
+
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+touch_dpad_zone_t I_GetTouchDpadZone(void)
+{
+    return (touch_dpad_zone_t)hybrid_dpad_zone;
+}
+
+// Read the same absolute thumb layout outside active gameplay. Menus need
+// cardinal keys rather than Doom ticcmd movement, and intermissions need a
+// native Fire pulse, but both should retain the accepted fixed-zone geometry
+// and visible feedback instead of silently falling back to swipe controls.
+static touch_dpad_zone_t PollFixedDpadZone(void)
+{
+    if (FT3168_Get_Point() == 0) {
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_NONE;
+        return TOUCH_DPAD_ZONE_NONE;
+    }
+
+    int x, y;
+    TouchToLogical(FT3168.x_point, FT3168.y_point, &x, &y);
+    if (!HybridDpadContains(x, y)) {
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_NONE;
+    } else if (y >= TOUCH_DPAD_DOWN_Y) {
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_DOWN;
+    } else if (x < TOUCH_DPAD_LEFT_X) {
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_LEFT;
+    } else if (x < TOUCH_DPAD_UP_X) {
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_UP;
+    } else {
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_RIGHT;
+    }
+    return (touch_dpad_zone_t)hybrid_dpad_zone;
+}
+
+static key_type_t PollFixedMenuDpadKey(void)
+{
+    switch (PollFixedDpadZone()) {
+        case TOUCH_DPAD_ZONE_LEFT:  return key_menu_left;
+        case TOUCH_DPAD_ZONE_UP:    return key_menu_up;
+        case TOUCH_DPAD_ZONE_RIGHT: return key_menu_right;
+        case TOUCH_DPAD_ZONE_DOWN:  return key_menu_down;
+        default:                    return 0;
+    }
+}
+
+static key_type_t PollIntermissionTouchKey(bool active)
+{
+    static bool released_since_entry;
+
+    if (!active) {
+        released_since_entry = false;
+        return 0;
+    }
+
+    touch_dpad_zone_t zone = PollFixedDpadZone();
+    if (!released_since_entry) {
+        // A movement contact may still be down when the exit activates. Make
+        // the player deliberately release before touch can skip score stages.
+        if (zone == TOUCH_DPAD_ZONE_NONE) released_since_entry = true;
+        return 0;
+    }
+    return zone == TOUCH_DPAD_ZONE_NONE ? 0 : key_fire;
+}
+#endif
+#endif
+
 static hybrid_touch_action_t ClassifyHybridDoubleTap(int x, int y)
 {
     if (y < AMOLED_1IN8_WIDTH - HYBRID_STRAFE_CORNER_HEIGHT_PX) {
@@ -759,17 +962,27 @@ static hybrid_touch_action_t PollHybridTouch(bool active)
     static uint32_t first_tap_time_us;
     static int first_tap_x, first_tap_y;
     static hybrid_touch_action_t first_tap_action;
+#if DOOM_BOOT_HOLD_STRAFE
+    static bool gesture_suppressed;
+#endif
 
     if (!active) {
         was_down = false;
         first_tap_valid = false;
         hybrid_turn = 0;
         hybrid_forward = 0;
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+        hybrid_dpad_zone = TOUCH_DPAD_ZONE_NONE;
+#endif
 #if DOOM_ROLL_STRAFE
         hybrid_touch_down = false;
 #endif
         hybrid_touch_strafe = 0;
         hybrid_touch_strafe_tics = 0;
+#if DOOM_BOOT_HOLD_STRAFE
+        hybrid_boot_strafe = 0;
+        gesture_suppressed = false;
+#endif
         return HYBRID_TOUCH_ACTION_NONE;
     }
 
@@ -788,27 +1001,58 @@ static hybrid_touch_action_t PollHybridTouch(bool active)
             anchor_y = ly;
             max_motion = 0;
             down_time_us = now;
+#if DOOM_BOOT_HOLD_STRAFE
+            gesture_suppressed = boot_strafe_modifier;
+#endif
+#if DOOM_TOUCH_DPAD
+            ApplyHybridDpad(lx, ly);
+#else
             hybrid_turn = 0;
             hybrid_forward = 0;
+#endif
             return HYBRID_TOUCH_ACTION_NONE;
         }
+
+#if DOOM_BOOT_HOLD_STRAFE
+        // A contact used for modified movement must not later resolve as a
+        // double-tap Use action, even if BOOT is released before the finger.
+        gesture_suppressed |= boot_strafe_modifier;
+#endif
 
         int dx = lx - anchor_x;
         int dy = ly - anchor_y;
         int motion = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
         if (motion > max_motion) max_motion = motion;
+#if DOOM_TOUCH_DPAD
+        ApplyHybridDpad(lx, ly);
+#else
         hybrid_turn = ScaleTouchTurn(dx);
         hybrid_forward = ScaleTouchMove(dy);
+#endif
         return HYBRID_TOUCH_ACTION_NONE;
     }
 
     hybrid_turn = 0;
     hybrid_forward = 0;
+#if DOOM_BOOT_HOLD_STRAFE
+    hybrid_boot_strafe = 0;
+#endif
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+    hybrid_dpad_zone = TOUCH_DPAD_ZONE_NONE;
+#endif
 #if DOOM_ROLL_STRAFE
     hybrid_touch_down = false;
 #endif
     if (!was_down) return HYBRID_TOUCH_ACTION_NONE;
     was_down = false;
+
+#if DOOM_BOOT_HOLD_STRAFE
+    if (gesture_suppressed) {
+        gesture_suppressed = false;
+        first_tap_valid = false;
+        return HYBRID_TOUCH_ACTION_NONE;
+    }
+#endif
 
     bool tap = max_motion <= HYBRID_TAP_MOVE_PX
         && (uint32_t)(now - down_time_us) <= HYBRID_TAP_MAX_US;
@@ -817,7 +1061,26 @@ static hybrid_touch_action_t PollHybridTouch(bool active)
         return HYBRID_TOUCH_ACTION_NONE;
     }
 
-    hybrid_touch_action_t action = ClassifyHybridDoubleTap(anchor_x, anchor_y);
+#if DOOM_TOUCH_DPAD && !DOOM_TOUCH_DPAD_THUMB_ZONES
+    // The pad owns its whole square. Repeated directional taps must never be
+    // reinterpreted as Use or a corner-strafe double tap.
+    if (HybridDpadContains(anchor_x, anchor_y)) {
+        first_tap_valid = false;
+        return HYBRID_TOUCH_ACTION_NONE;
+    }
+#endif
+
+    // F14 deliberately permits Use inside its fixed controls. Holding still
+    // commands the zone immediately; two short, stationary taps resolve to
+    // Use on the second release. This preserves zero-latency movement at the
+    // cost of two tiny direction pulses during the double tap.
+    hybrid_touch_action_t action =
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+        HybridDpadContains(anchor_x, anchor_y)
+            ? HYBRID_TOUCH_ACTION_USE
+            :
+#endif
+              ClassifyHybridDoubleTap(anchor_x, anchor_y);
 
     if (first_tap_valid
         && (uint32_t)(now - first_tap_time_us) <= HYBRID_DOUBLE_TAP_US
@@ -1005,34 +1268,45 @@ static void PollHybridMotion(bool active, bool touch_down)
 
 #define DOUBLE_PRESS_WINDOW_US (400 * 1000)
 
+// Open the in-game menu well before the AXP2101's own long-press IRQ
+// (nominally 1-2.5s) or hardware power-off threshold (4-10s). Releasing before
+// this threshold resolves a tap; holding emits exactly one Escape pulse.
+#define HYBRID_PWR_MENU_HOLD_US (450 * 1000)
+#define HYBRID_PWR_PULSE_QUEUE_MAX 4
+
+static absolute_time_t pwr_last_short_press;
+static bool pwr_awaiting_double = false;
+
+static void ResetPwrButtonClicks(void)
+{
+    pwr_awaiting_double = false;
+}
+
 // Returns 0=none, 1=single, 2=double, 3=long. Verbatim port of the
 // calibration firmware's poll_pwr_button() (main.c) - already validated.
 static int PollPwrButton(pwr_button_event_t ev)
 {
-    static absolute_time_t last_short_press;
-    static bool awaiting_double = false;
-
     if (ev & PWR_BUTTON_LONG_PRESS) {
         // The AXP2101 already handles the actual power-toggle in hardware
         // for a long press - nothing for us to do with this event.
-        awaiting_double = false;
+        ResetPwrButtonClicks();
         return 3;
     }
 
     if (ev & PWR_BUTTON_SHORT_PRESS) {
-        if (awaiting_double &&
-            absolute_time_diff_us(last_short_press, get_absolute_time()) < DOUBLE_PRESS_WINDOW_US) {
-            awaiting_double = false;
+        if (pwr_awaiting_double &&
+            absolute_time_diff_us(pwr_last_short_press, get_absolute_time()) < DOUBLE_PRESS_WINDOW_US) {
+            ResetPwrButtonClicks();
             return 2;
         }
-        awaiting_double = true;
-        last_short_press = get_absolute_time();
+        pwr_awaiting_double = true;
+        pwr_last_short_press = get_absolute_time();
         return 0;
     }
 
-    if (awaiting_double &&
-        absolute_time_diff_us(last_short_press, get_absolute_time()) > DOUBLE_PRESS_WINDOW_US) {
-        awaiting_double = false;
+    if (pwr_awaiting_double &&
+        absolute_time_diff_us(pwr_last_short_press, get_absolute_time()) > DOUBLE_PRESS_WINDOW_US) {
+        ResetPwrButtonClicks();
         return 1;
     }
     return 0;
@@ -1042,6 +1316,99 @@ static void PostKeyEvent(evtype_t type, key_type_t key) {
     event_t event = { .type = type, .data1 = key, .data2 = 0, .data3 = 0 };
     D_PostEvent(&event);
 }
+
+#if DOOM_BOOT_NEXT_WEAPON
+#define BOOT_SAMPLE_PERIOD_US (25u * 1000u)
+#define BOOT_STABLE_SAMPLES 2u
+#define BOOT_FLASH_SAFE_TIMEOUT_MS 2u
+#if DOOM_BOOT_HOLD_STRAFE
+// Starts about 300 ms after the physical press once the existing two-sample
+// debounce is included: deliberate, but fast enough for a combat modifier.
+#define BOOT_STRAFE_HOLD_US (250u * 1000u)
+#endif
+
+static void PollBootNextWeapon(bool allowed)
+{
+    static uint32_t last_sample_us;
+    static uint8_t pressed_samples;
+    static uint8_t released_samples;
+    static bool press_latched;
+#if DOOM_BOOT_HOLD_STRAFE
+    static uint32_t press_started_us;
+    static bool hold_resolved;
+#endif
+
+    if (!allowed) {
+        last_sample_us = 0;
+        pressed_samples = 0;
+        released_samples = 0;
+        press_latched = false;
+#if DOOM_BOOT_HOLD_STRAFE
+        press_started_us = 0;
+        hold_resolved = false;
+        boot_strafe_modifier = false;
+#endif
+        return;
+    }
+
+    uint32_t now_us = time_us_32();
+    if (last_sample_us != 0
+        && (uint32_t) (now_us - last_sample_us) < BOOT_SAMPLE_PERIOD_US) {
+        return;
+    }
+    last_sample_us = now_us;
+
+    bool pressed = false;
+    if (bootsel_button_pressed_flash_safe(&pressed,
+                                          BOOT_FLASH_SAFE_TIMEOUT_MS) != PICO_OK) {
+        // A missed lockout deadline is not input. Preserve the last confirmed
+        // state and retry on the next 25 ms sampling slot.
+        return;
+    }
+
+    if (!press_latched) {
+        released_samples = 0;
+        if (!pressed) {
+            pressed_samples = 0;
+            return;
+        }
+        if (++pressed_samples >= BOOT_STABLE_SAMPLES) {
+            press_latched = true;
+            pressed_samples = 0;
+#if DOOM_BOOT_HOLD_STRAFE
+            press_started_us = now_us;
+            hold_resolved = false;
+#endif
+        }
+        return;
+    }
+
+    if (pressed) {
+        released_samples = 0;
+#if DOOM_BOOT_HOLD_STRAFE
+        if (!hold_resolved
+            && (uint32_t)(now_us - press_started_us) >= BOOT_STRAFE_HOLD_US) {
+            hold_resolved = true;
+            boot_strafe_modifier = true;
+        }
+#endif
+        return;
+    }
+
+    if (++released_samples >= BOOT_STABLE_SAMPLES) {
+        released_samples = 0;
+        press_latched = false;
+#if DOOM_BOOT_HOLD_STRAFE
+        boot_strafe_modifier = false;
+        if (!hold_resolved) G_QueueNextWeapon();
+        hold_resolved = false;
+        press_started_us = 0;
+#else
+        G_QueueNextWeapon();
+#endif
+    }
+}
+#endif
 
 // A momentary chip-reported press (unlike a held GPIO level) can't be
 // expressed as a single keydown - Doom samples gamekeydown[] once per tic
@@ -1056,6 +1423,22 @@ static void PulseKey(key_type_t *pending_key)
     if (*pending_key) {
         PostKeyEvent(ev_keyup, *pending_key);
         *pending_key = 0;
+    }
+}
+
+static void EmitOrQueuePwrPulse(key_type_t key,
+                                bool released_this_tic,
+                                key_type_t *pending_key,
+                                key_type_t *queued_key,
+                                uint8_t *queued_pulses)
+{
+    if (!released_this_tic && !*pending_key && *queued_pulses == 0) {
+        PostKeyEvent(ev_keydown, key);
+        *pending_key = key;
+    } else if ((*queued_pulses == 0 || *queued_key == key)
+               && *queued_pulses < HYBRID_PWR_PULSE_QUEUE_MAX) {
+        *queued_key = key;
+        ++*queued_pulses;
     }
 }
 
@@ -1079,19 +1462,43 @@ static void PollHardwareControls(void)
     }
 
     // menuactive (m_menu.c) has no header declaration - it is a plain global,
-    // not part of the public menu API. Motion is never allowed to navigate
-    // menus: their proven swipe controls remain unchanged.
+    // not part of the public menu API. Gameplay motion remains gated to a
+    // running level; fixed thumb zones are translated separately for menus.
     extern boolean menuactive;
 #if DOOM_HYBRID_CONTROLS
     bool hybrid_game = !menuactive && gamestate == GS_LEVEL;
+    bool hybrid_intermission = !menuactive && gamestate == GS_INTERMISSION;
+    bool pwr_fire_context = hybrid_game || hybrid_intermission;
 #else
     bool hybrid_game = false;
 #endif
 
+#if DOOM_BOOT_NEXT_WEAPON
+    PollBootNextWeapon(hybrid_game && !netgame
+                       && I_BootInputFlashSafeReady());
+#endif
+
     static key_type_t touch_pending_key = 0;
     static key_type_t pwr_pending_key = 0;
+    static bool pwr_hold_active = false;
+    static bool pwr_suppress_until_release = false;
+    static uint32_t pwr_hold_started_us = 0;
+    static key_type_t pwr_tap_key = 0;
+    static key_type_t pwr_queued_key = 0;
+    static uint8_t pwr_queued_pulses = 0;
+    bool pwr_released_this_tic = pwr_pending_key != 0;
     PulseKey(&touch_pending_key);
     PulseKey(&pwr_pending_key);
+#if DOOM_HYBRID_CONTROLS
+    // Doom must sample BT_ATTACK low for a complete tic between distinct
+    // trigger pulls. If another PWR tap lands on the same tic that releases
+    // the previous pulse, defer it instead of posting keyup+keydown together.
+    if (!pwr_released_this_tic && pwr_queued_pulses > 0) {
+        PostKeyEvent(ev_keydown, pwr_queued_key);
+        pwr_pending_key = pwr_queued_key;
+        if (--pwr_queued_pulses == 0) pwr_queued_key = 0;
+    }
+#endif
 
     // The FT3168 can jitter between adjacent directions. Posting every sample
     // change produces an
@@ -1104,6 +1511,9 @@ static void PollHardwareControls(void)
     static uint8_t candidate_touch_tics = 0;
 
     if (hybrid_game) {
+#if DOOM_TOUCH_DPAD_THUMB_ZONES
+        PollIntermissionTouchKey(false);
+#endif
         if (held_touch_key) PostKeyEvent(ev_keyup, held_touch_key);
         held_touch_key = 0;
         candidate_touch_key = 0;
@@ -1137,7 +1547,19 @@ static void PollHardwareControls(void)
         PollHybridMotion(false, false);
 #endif
 #endif
-        key_type_t touch_key = PollTouchMovementKey();
+        key_type_t touch_key;
+#if DOOM_HYBRID_CONTROLS && DOOM_TOUCH_DPAD_THUMB_ZONES
+        if (hybrid_intermission) {
+            touch_key = PollIntermissionTouchKey(true);
+        } else {
+            PollIntermissionTouchKey(false);
+            touch_key = menuactive
+                ? PollFixedMenuDpadKey()
+                : PollTouchMovementKey();
+        }
+#else
+        touch_key = PollTouchMovementKey();
+#endif
 
         if (touch_key == held_touch_key) {
             candidate_touch_key = 0;
@@ -1163,15 +1585,77 @@ static void PollHardwareControls(void)
 
     pwr_button_event_t pwr_events = pwr_button_poll();
 #if DOOM_HYBRID_CONTROLS
-    if (hybrid_game) {
-        if (pwr_events & PWR_BUTTON_PRESS_EDGE) {
-            PostKeyEvent(ev_keydown, key_fire);
-            pwr_pending_key = key_fire;
+    // Escape changes menuactive before the physical button is released. Swallow
+    // that completed press cycle so its release/short-press flags cannot become
+    // an unintended menu selection on the following tic.
+    if (pwr_suppress_until_release) {
+        if (pwr_events & (PWR_BUTTON_RELEASE_EDGE | PWR_BUTTON_SHORT_PRESS)) {
+            pwr_suppress_until_release = false;
+            pwr_hold_active = false;
         }
-        // Release and long-press events are intentionally ignored in-level.
-        // PWR is the physical power control, so gameplay promises taps only.
         return;
     }
+
+    bool press_edge = (pwr_events & PWR_BUTTON_PRESS_EDGE) != 0;
+    bool release_event =
+        (pwr_events & (PWR_BUTTON_RELEASE_EDGE | PWR_BUTTON_SHORT_PRESS)) != 0;
+
+    if (release_event) {
+        bool was_active = pwr_hold_active;
+        key_type_t completed_key = was_active
+            ? pwr_tap_key
+            : (press_edge ? (pwr_fire_context
+                             ? key_fire : key_menu_forward) : 0);
+
+        // If the first release and a second press land between polls, the PMIC
+        // reports both edge bits together. Complete the known first tap, then
+        // preserve the second press instead of clearing it. When there was no
+        // earlier active press, a combined mask is one whole fast tap.
+        bool rearm_second_press = was_active && press_edge;
+        pwr_hold_active = rearm_second_press;
+        pwr_hold_started_us = time_us_32();
+        pwr_tap_key = rearm_second_press
+            ? (pwr_fire_context ? key_fire : key_menu_forward)
+            : 0;
+        ResetPwrButtonClicks();
+        if (completed_key) {
+            EmitOrQueuePwrPulse(completed_key, pwr_released_this_tic,
+                                &pwr_pending_key, &pwr_queued_key,
+                                &pwr_queued_pulses);
+        }
+        return;
+    }
+
+    if (press_edge) {
+        pwr_hold_active = true;
+        pwr_hold_started_us = time_us_32();
+        pwr_tap_key = pwr_fire_context ? key_fire : key_menu_forward;
+        ResetPwrButtonClicks();
+    }
+
+    if (pwr_hold_active
+        && (uint32_t)(time_us_32() - pwr_hold_started_us)
+            >= HYBRID_PWR_MENU_HOLD_US) {
+        ResetPwrButtonClicks();
+        if (pwr_pending_key) {
+            PostKeyEvent(ev_keyup, pwr_pending_key);
+            pwr_pending_key = 0;
+        }
+        pwr_queued_key = 0;
+        pwr_queued_pulses = 0;
+        PostKeyEvent(ev_keydown, key_menu_activate);
+        pwr_pending_key = key_menu_activate;
+        pwr_hold_active = false;
+        pwr_suppress_until_release = true;
+        pwr_tap_key = 0;
+        return;
+    }
+
+    // The hybrid state machine owns PWR in every game state. The PMIC's
+    // short/double/long classifier is not forwarded: release resolves a tap,
+    // while our shorter timer resolves Escape/Back. The PMIC retains final
+    // authority over a continued physical hold and may still power off.
+    return;
 #endif
 
     int pwr = PollPwrButton(pwr_events);
@@ -1205,6 +1689,9 @@ void I_ApplyHardwareTiccmd(ticcmd_t *cmd)
     cmd->forwardmove = (signed char)forward;
 
     int strafe = (int)cmd->sidemove + hybrid_touch_strafe;
+#if DOOM_BOOT_HOLD_STRAFE
+    strafe += hybrid_boot_strafe;
+#endif
 #if DOOM_ROLL_STRAFE
     strafe += hybrid_motion_strafe;
 #endif
