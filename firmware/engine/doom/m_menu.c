@@ -21,6 +21,7 @@
 
 #include <stdlib.h>
 #include <ctype.h>
+#include <string.h>
 
 
 #include "doomdef.h"
@@ -832,12 +833,53 @@ static void SetDefaultSaveName(int slot)
     joypadSave = false;
 }
 
+#if DOOM_HANDHELD_AUTO_SAVE_NAMES
+// A pocket device has no keyboard and should not strand the player in Doom's
+// save-description editor. Name each slot after the current level and its slot
+// number, trimming long titles to fit the original save header.
+static void SetHandheldSaveName(int slot)
+{
+    const char *title = HU_GetLevelTitle();
+    const char *separator = strchr(title, ':');
+    const int prefix_chars = sizeof("SAVED GAME 1 - ") - 1;
+    const int max_title_chars = SAVESTRINGSIZE - 1 - prefix_chars;
+    size_t label_length;
+
+    if (separator != NULL)
+    {
+        title = separator + 1;
+        while (*title == ' ')
+        {
+            ++title;
+        }
+    }
+
+    M_snprintf(savegamestrings[slot], SAVESTRINGSIZE,
+               "SAVED GAME %d - %.*s", slot + 1, max_title_chars, title);
+
+    label_length = strlen(savegamestrings[slot]);
+    while (label_length > 0 && savegamestrings[slot][label_length - 1] == ' ')
+    {
+        savegamestrings[slot][--label_length] = '\0';
+    }
+
+    M_ForceUppercase(savegamestrings[slot]);
+}
+#endif
+
 //
 // User wants to save. Start string input for M_Responder
 //
 void M_SaveSelect(int choice)
 {
     int x, y;
+
+#if DOOM_HANDHELD_AUTO_SAVE_NAMES
+    saveSlot = choice;
+    SetHandheldSaveName(choice);
+    M_DoSave(choice);
+    return;
+#endif
 
     // we are going to be intercepting all chars
     stringEntry = 1;
@@ -2675,4 +2717,3 @@ void M_Init (void)
     opldev = M_CheckParm("-opldev") > 0;
 #endif
 }
-

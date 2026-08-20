@@ -355,11 +355,23 @@ static void I_Pico_UpdateSound(void)
     // fill both producer buffers with silence: that wastes mixer time and
     // adds up to two blocks of latency before a newly-triggered SFX starts.
     void (*generator)(audio_buffer_t *buffer) = music_generator;
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+    bool sfx_active = false;
+    bool needs_mix = generator != NULL
+                  || (fade_state != FS_NONE && fade_state != FS_SILENT);
+    for (int ch = 0; ch < NUM_SOUND_CHANNELS; ch++) {
+        if (is_channel_playing(ch)) {
+            sfx_active = true;
+            needs_mix = true;
+        }
+    }
+#else
     bool needs_mix = generator != NULL
                   || (fade_state != FS_NONE && fade_state != FS_SILENT);
     for (int ch = 0; ch < NUM_SOUND_CHANNELS && !needs_mix; ch++) {
         needs_mix = is_channel_playing(ch);
     }
+#endif
     if (!needs_mix) {
         mutex_exit(&update_sound_mutex);
         return;
@@ -372,6 +384,16 @@ static void I_Pico_UpdateSound(void)
     int16_t *samples = mix_buffer.samples;
     if (generator) {
         generator(&mix_buffer);
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+        // Make attacks, doors, pickups, and menu feedback stay legible. This
+        // touches only the generated music; the accepted SFX path is mixed at
+        // its original level immediately afterwards.
+        if (sfx_active) {
+            for (int s = 0; s < MIX_BUFFER_SAMPLES; ++s) {
+                samples[s] = (int16_t)((samples[s] * 3) / 4);
+            }
+        }
+#endif
     } else {
         memset(samples, 0, sizeof(mix_buffer.samples));
     }

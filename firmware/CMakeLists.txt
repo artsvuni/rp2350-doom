@@ -12,6 +12,12 @@ set(CMAKE_CXX_STANDARD 17)
 # Keep the implementation available for experiments without charging the
 # normal SFX-only build its code, static state, or continuous mixer cost.
 option(DOOM_ENABLE_MUSIC "Enable experimental MUSX music synthesis" OFF)
+option(DOOM_MUSIC_SPEAKER_MASTERING
+    "Use smoother synthesis and music-only small-speaker mastering" ON)
+option(DOOM_HANDHELD_AUTO_SAVE_NAMES
+    "Save immediately with generated slot/map/time names instead of typing" OFF)
+option(DOOM_FLASH_SAFE_SAVES
+    "Coordinate both RP2350 cores while erasing/programming save flash" OFF)
 option(DOOM_ENABLE_PROFILING "Capture a bounded reset-persistent performance report" OFF)
 option(DOOM_ASYNC_AMOLED "Overlap AMOLED DMA with presentation packing" OFF)
 option(DOOM_HYBRID_CONTROLS
@@ -160,6 +166,9 @@ message(STATUS
     "Doom AMOLED output: ${DOOM_DISPLAY_WIDTH}x${DOOM_DISPLAY_HEIGHT}; "
     "tile=${DOOM_PANEL_CHUNK_ROWS_RESOLVED}; async=${DOOM_ASYNC_AMOLED}; "
     "profiling=${DOOM_ENABLE_PROFILING}; dpad=${DOOM_TOUCH_DPAD}; "
+    "auto_save_names=${DOOM_HANDHELD_AUTO_SAVE_NAMES}; "
+    "flash_safe_saves=${DOOM_FLASH_SAFE_SAVES}; "
+    "music_mastering=${DOOM_MUSIC_SPEAKER_MASTERING}; "
     "thumb_zones=${DOOM_TOUCH_DPAD_THUMB_ZONES}; "
     "dpad_overlay=${DOOM_TOUCH_DPAD_OVERLAY}; "
     "boot_next_weapon=${DOOM_BOOT_NEXT_WEAPON}; "
@@ -263,10 +272,14 @@ add_subdirectory(lib/audio_pio)
 add_subdirectory(lib/es8311)
 add_subdirectory(lib/bootlog)
 
-if(DOOM_BOOT_NEXT_WEAPON)
-    # Every BOOT-enabled candidate must keep all possible audio-DMA sources in
-    # SRAM. Gate B additionally disables audio unless Gate C is explicitly ON.
+if(DOOM_BOOT_NEXT_WEAPON OR DOOM_FLASH_SAFE_SAVES)
+    # No DMA-visible source may live in XIP while BOOT sampling or a save write
+    # temporarily makes flash unavailable. Gate B additionally disables audio
+    # unless Gate C is explicitly ON.
     target_compile_definitions(audio_pio PRIVATE DOOM_BOOT_FLASH_SAFE_DMA=1)
+endif()
+
+if(DOOM_BOOT_NEXT_WEAPON)
     if(NOT DOOM_BOOT_WITH_SOUND_EFFECTS)
         target_compile_definitions(config PRIVATE DOOM_BOOT_GATE_AUDIO_DISABLED=1)
     endif()
@@ -331,7 +344,7 @@ target_link_libraries(doom PRIVATE
     m
 )
 
-if(DOOM_BOOT_NEXT_WEAPON)
+if(DOOM_BOOT_NEXT_WEAPON OR DOOM_FLASH_SAFE_SAVES)
     target_link_libraries(doom PRIVATE pico_flash)
 endif()
 
@@ -347,6 +360,9 @@ target_compile_definitions(doom PRIVATE
     DOOM_BOOT_NEXT_WEAPON=$<BOOL:${DOOM_BOOT_NEXT_WEAPON}>
     DOOM_BOOT_HOLD_STRAFE=$<BOOL:${DOOM_BOOT_HOLD_STRAFE}>
     DOOM_ROLL_STRAFE=$<BOOL:${DOOM_ROLL_STRAFE}>
+    DOOM_HANDHELD_AUTO_SAVE_NAMES=$<BOOL:${DOOM_HANDHELD_AUTO_SAVE_NAMES}>
+    DOOM_FLASH_SAFE_SAVES=$<BOOL:${DOOM_FLASH_SAFE_SAVES}>
+    DOOM_MUSIC_SPEAKER_MASTERING=$<BOOL:${DOOM_MUSIC_SPEAKER_MASTERING}>
     PICODOOM_RENDER_NEWHOPE=1
     MERGE_DISTSCALE0_INTO_VIEWCOSSINANGLE=1
 
@@ -503,12 +519,16 @@ target_compile_definitions(doom PRIVATE
     # music, when enabled below, mixes through that same bounded queue.
 )
 
-if(DOOM_BOOT_NEXT_WEAPON)
+if(DOOM_BOOT_NEXT_WEAPON OR DOOM_FLASH_SAFE_SAVES)
     target_compile_definitions(doom PRIVATE
-        # A failed core-safety handshake must skip the sample, not assert or
-        # guess at the physical button state.
+        # A failed core-safety handshake must return an error, not assert. BOOT
+        # skips its sample; save leaves the old slot unconfirmed and reports
+        # failure rather than entering an unsafe flash write.
         PICO_FLASH_ASSERT_ON_UNSAFE=0
     )
+endif()
+
+if(DOOM_BOOT_NEXT_WEAPON)
     if(NOT DOOM_BOOT_WITH_SOUND_EFFECTS)
         target_compile_definitions(doom PRIVATE
             DOOM_BOOT_GATE_AUDIO_DISABLED=1

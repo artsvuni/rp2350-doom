@@ -97,7 +97,14 @@ int sfxVolume = 8;
 
 // Maximum volume of music.
 
+#if PICO_ON_DEVICE && DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+// Start at Doom's proven audible level. The music-only peak control and SFX
+// ducking below provide headroom without pushing quiet passages under this
+// tiny speaker's practical threshold. The normal 0..15 menu control remains.
 int musicVolume = 8;
+#else
+int musicVolume = 8;
+#endif
 
 // Internal volume level, ranging from 0-127
 

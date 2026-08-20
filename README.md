@@ -161,10 +161,39 @@ cmake -S firmware -B firmware/build-controls-448 \
 cmake --build firmware/build-controls-448 --target doom -j4
 ```
 
+### Keyboard-free save names
+
+The optional handheld save flow skips Doom's keyboard-only description editor
+and saves immediately with a deterministic label such as
+`SAVED GAME 1 - HANGAR`. The number comes from the selected slot and the title
+comes from Doom's current level; no RTC or keyboard is required:
+
+```sh
+cmake -S firmware -B firmware/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DDOOM_HANDHELD_AUTO_SAVE_NAMES=ON \
+  -DDOOM_FLASH_SAFE_SAVES=ON
+cmake --build firmware/build --target doom -j4
+```
+
+The option defaults off so conventional keyboard builds keep vanilla text
+entry. `DOOM_FLASH_SAFE_SAVES` is required on the multicore handheld. Save is
+requested during Doom's game tick, before the next render wakes core 1; the
+inherited display-oriented pause deadlocks at that boundary. This option uses
+a dedicated core-1 pause rendezvous, keeps DMA sources in SRAM, and then uses
+the Pico SDK lockout around each flash-sector erase/program operation.
+
 ### Optional music build
 
 The experimental fixed-memory music backend can be enabled without changing
-source code:
+source code. Speaker mastering is enabled by default inside music builds: it
+uses smoother voices, music-only filtering and peak control, and short SFX
+ducking without changing the accepted effects path:
+
+> **Hardware status:** the current mastered candidate is rejected. It produced
+> intermittent distorted bursts rather than usable music during gameplay. Keep
+> `DOOM_ENABLE_MUSIC=OFF` for normal device builds while the fixed-memory OPL2
+> alternative is investigated.
 
 ```sh
 cmake -S firmware -B firmware/build \
@@ -174,6 +203,9 @@ cmake --build firmware/build --target doom -j4
 ```
 
 Return to the device default with `-DDOOM_ENABLE_MUSIC=OFF`.
+Set `-DDOOM_MUSIC_SPEAKER_MASTERING=OFF` only to reproduce the original harsh
+oscillator baseline. See [the music experiment](docs/MUSIC-QUALITY-EXPERIMENT.md)
+for measurements, alternatives, and the short listening protocol.
 
 ### Prepare the WAD data
 

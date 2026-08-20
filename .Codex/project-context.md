@@ -4,7 +4,16 @@
 
 DOOM runs on the Waveshare RP2350-Touch-AMOLED-1.8 and is playable with asymmetric thumb controls plus PWR and BOOT. The product goal is an enjoyable, completable handheld experience rather than proof that the port boots. F18 is installed and hardware-accepted as the core experience: full-panel 448x368, fixed thumb zones and guides in gameplay and menus, in-zone Use, score-screen progression, PWR Fire/Escape, BOOT tap next weapon, and BOOT-hold strafing. F18 deliberately stretches exact 4:3 by 9.5% vertically; F17 448x336 remains the exact-4:3 rollback, 448x320 the second visual rollback, and 448x280/35.2 FPS the measured performance rollback.
 Its checksum-valid one-minute combat baseline is 34.3 presented FPS with zero
-DMA timeouts; the normal non-profiler F18 image is restored on the device.
+DMA timeouts. Exact F18 is restored after two rejected save attempts. A revised
+save-only candidate now fixes both the pre-write core1 pause rendezvous and the
+later flash lockout; it is installed and successfully created a save on
+hardware. Load, overwrite, and post-reboot persistence remain, while exact F18
+is still the immediate rollback. The installed follow-up deliberately avoids
+RTC integration and names each slot in the format `SAVED GAME 1 - HANGAR`,
+where the digit is the selected slot; its flash write was verified, but the
+label has not yet been physically checked in the menu. The session closes with
+effects-only audio intentionally retained; music work is deferred to a later,
+instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
 
 ## Active goals
 
@@ -14,11 +23,16 @@ DMA timeouts; the normal non-profiler F18 image is restored on the device.
 - Confirm extended-play stability through repeated E1M1-to-E1M2 runs.
 - Preserve the hardware-verified asynchronous sound-effect path while testing extended gameplay stability.
 - Keep effects-only audio as the device default while preserving music as an optional experiment.
+- Keep music disabled after the speaker-mastered oscillator candidate produced
+  distorted intermittent bursts; use fixed-memory OPL2 plus refill telemetry
+  if music is revisited.
 - Treat weapon selection and Escape/menu as solved essential actions; audit only genuinely missing controls before adding more vocabulary.
 - Treat F15's inherited F14.1 thumb geometry and visible guides as the navigation baseline.
 - Observe F15 through longer combat sessions before considering the BOOT safety/stability question fully mature.
 - Preserve F18 as the combined controls/display baseline; refine sensitivity,
   guides, or zone geometry only in isolated future comparisons.
+- Replace the remaining keyboard-only Quit Game confirmation with a
+  device-specific PWR confirm/cancel interaction.
 - Measure memory and timing first, then refactor subsystems in small hardware-testable stages.
 
 ## Key decisions made
@@ -39,6 +53,13 @@ DMA timeouts; the normal non-profiler F18 image is restored on the device.
 - Require staged admission for flash-CS input: isolated probe, silent Doom, then effects-enabled Doom; all three passed for F15.
 - Treat flash-backed audio DMA as the previously missed hazard: `silence_buffer` links in XIP and must move to SRAM before any BOOT-enabled Doom test.
 - Runtime BOOT must use the SDK `flash_safe_execute()` contract, register core1 with `flash_safe_execute_core_init()`, sample only in a single-player level, and map one debounced release to Doom's existing next-weapon path. Do not add hold/double actions.
+- Runtime save writes must use the same SDK multicore lockout. First rendezvous
+  with core1 after its previous presentation has completed, retain all active
+  DMA sources in SRAM, execute only the erase/program callback from SRAM, and
+  abort rather than writing if the lockout cannot be established.
+- Keep handheld save labels simple and deterministic: `SAVED GAME <slot> -
+  <level>`, truncated within the original header. Do not add RTC setup or
+  change the save format merely to timestamp a slot.
 - Commit meaningful changes locally, never push without an explicit request, and normally squash unpublished commits into one milestone before pushing.
 - Keep README updates publication-oriented: major milestones or final pre-push cleanup only, not routine local commits.
 - Do not use continuous tilt for an essential action; repeated hardware tests made its neutral and activation too difficult to trust.
@@ -46,6 +67,10 @@ DMA timeouts; the normal non-profiler F18 image is restored on the device.
 - Treat full-width 448x280 as an ambition; select the largest mode that remains smooth, responsive, stable, and memory-safe.
 - Keep performance instrumentation compile-time optional and bounded; measurements must not become a new gameplay dependency.
 - Prefer a coherent experience over feature count: effects stay, poor-quality music stays off, and later HUD/battery/settings additions must justify their cost.
+- Never apply global codec EQ or gain merely to rescue music: it would also
+  alter the accepted sound effects. Master the generated score independently.
+- Revisit music only through a fixed-memory OPL2 candidate with measured refill
+  cost and underflow telemetry before listening on the physical speaker.
 
 ## Current state
 
@@ -143,6 +168,16 @@ DMA timeouts; the normal non-profiler F18 image is restored on the device.
   1,350/3,808us, display wait at most 10us, and zero DMA timeouts. This is only
   a 2.5% cadence regression from 448x280/35.2 FPS while emitting 31.4% more
   pixels. The normal F18 firmware was restored after capture.
+- Two keyboard-free save attempts froze after a slot was selected. Readback of
+  the final 64 KiB proved it remained erased, correcting the first diagnosis:
+  neither attempt reached the flash writer. `G_DoSaveGame()` runs inside
+  `TryRunTics()`, before `pd_begin_frame()` wakes core1, but the inherited pause
+  queued `render_frame_ready` and waited while core1 slept on `core1_wake`.
+  The revised candidate wakes core1 into a dedicated save-pause rendezvous,
+  then retains the independently necessary `flash_safe_execute()` sector
+  lockout and SRAM-only DMA sources. It adds 16 BSS bytes and has UF2 SHA-256
+  `24ac61cc18f4b92c6b0298049336a967aa461ef900dc31e94347689aa46cde1f`.
+  Its first physical save completed and returned control normally.
 - A future Wolfenstein 3D/Spear of Destiny port plus a two-game launcher is plausible but should begin as a separate engine/firmware-slot feasibility project using the shared board drivers.
 - The original four fixed hold zones remain available via a compile-time selector.
 - Video defaults to centered native 320x200, but 384x240, 416x260, and full-width 448x280 are now selectable Release configurations behind the same fused compose/scale/transpose presenter.
@@ -179,9 +214,13 @@ DMA timeouts; the normal non-profiler F18 image is restored on the device.
 - Does the final normal full-width build remain stable through repeated E1M1-to-E1M2 runs now that performance profiling is locked?
 - Does asynchronous SFX remain stable during a longer sustained-combat test?
 - Can the optional MUSX synthesizer's timbre be improved enough to suit the small speaker?
+- Does the revised pause-and-flash-safe save candidate load, overwrite, and
+  retain its now-successful first slot after a normal reboot?
 - How does the accepted F16 control baseline feel during a longer combat run?
 - Is the 140px quadratic movement curve calm enough in the middle while keeping far-travel running reachable?
 - Does release-resolved PWR tap-fire remain responsive and reliable during combat?
 - Would an explicitly menu-only swipe mode feel better than F17 fixed-zone
   navigation without weakening input consistency elsewhere?
+- Does mapping short PWR/Enter to Yes only during Y/N dialogs, while retaining
+  PWR hold/Escape as cancel, give Quit Game the expected handheld behaviour?
 - Can Doom and a Wolf3D/Spear port fit as independent application/data slots within the 16 MiB flash, selected by a small launcher?

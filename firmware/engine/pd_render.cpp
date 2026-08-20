@@ -50,6 +50,14 @@ extern "C" {
 // we wake up core1 during rendering whole rendering part of game loop.. during
 // this time it can do sound updates (since the main core is clearly not)
 semaphore_t core1_wake, core0_done, core1_done;
+#if DOOM_FLASH_SAFE_SAVES
+// G_DoSaveGame runs from TryRunTics(), before pd_begin_frame() wakes core1 for
+// the next render. The inherited save pause incorrectly queued a display frame
+// and then waited while core1 was still asleep on core1_wake. Use an explicit
+// pause rendezvous at that actual lifecycle boundary instead.
+static semaphore_t save_pause_ack, save_pause_resume;
+static volatile boolean save_pause_requested;
+#endif
 
 #if USE_CORE1_FOR_FLATS
 semaphore_t core1_do_flats;
@@ -822,6 +830,11 @@ void pd_init() {
     sem_init(&core1_wake, 0, 1);
     sem_init(&core0_done, 0, 1);
     sem_init(&core1_done, 0, 1);
+#if DOOM_FLASH_SAFE_SAVES
+    sem_init(&save_pause_ack, 0, 1);
+    sem_init(&save_pause_resume, 0, 1);
+    save_pause_requested = false;
+#endif
 #if PICO_ON_DEVICE
     static_assert(sizeof(vpatchlists_t) < 0xc00, "");
 #if !PICO_RP2350
@@ -2982,7 +2995,16 @@ void pd_end_frame(int wipe_start) {
 
 void pd_core1_loop() {
 #if PICO_ON_DEVICE
+#if DOOM_FLASH_SAFE_SAVES
+    for (;;) {
+        sem_acquire_blocking(&core1_wake);
+        if (!save_pause_requested) break;
+        sem_release(&save_pause_ack);
+        sem_acquire_blocking(&save_pause_resume);
+    }
+#else
     sem_acquire_blocking(&core1_wake);
+#endif
 #if USE_CORE1_FOR_FLATS
     while (!sem_acquire_timeout_ms(&core1_do_flats, 1)) {
         SafeUpdateSound();
@@ -3008,6 +3030,34 @@ void pd_core1_loop() {
 extern "C" {
 #include "i_picosound.h"
 }
+#if DOOM_FLASH_SAFE_SAVES
+void pd_start_save_pause(void) {
+    if (I_PicoSoundIsInitialized()) {
+        I_PicoSoundFade(false);
+        while (I_PicoSoundFading()) {
+            I_UpdateSound();
+        }
+    }
+
+    save_pause_requested = true;
+    __compiler_memory_barrier();
+    sem_release(&core1_wake);
+    sem_acquire_blocking(&save_pause_ack);
+}
+
+void pd_end_save_pause(void) {
+    save_pause_requested = false;
+    __compiler_memory_barrier();
+    sem_release(&save_pause_resume);
+
+    if (I_PicoSoundIsInitialized()) {
+        I_PicoSoundFade(true);
+        while (I_PicoSoundFading()) {
+            I_UpdateSound();
+        }
+    }
+}
+#else
 static uint8_t old_video_type;
 void pd_start_save_pause(void) {
     I_PicoSoundFade(false);
@@ -3037,6 +3087,7 @@ void pd_end_save_pause(void) {
         I_UpdateSound();
     }
 }
+#endif
 
 #endif
 

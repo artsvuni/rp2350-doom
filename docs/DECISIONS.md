@@ -1,5 +1,80 @@
 # Decisions Log
 
+## 2026-08-18 — Put the save-slot identity before the level title
+
+Refine the clock-free label to read like a conventional save entry:
+`SAVED GAME 1 - HANGAR`. The digit is always the selected Doom slot number,
+not a counter derived from the map or previous saves. This makes slot identity
+immediately explicit while preserving the useful location cue.
+
+The fixed prefix consumes 15 of Doom's 23 visible save-label characters, so
+level titles receive up to eight characters. Longer titles are clipped and any
+trailing space introduced by clipping is removed. The label remains within the
+original save header and adds no persistent state or RTC dependency.
+
+## 2026-08-18 — Prefer level-and-slot save names over clock integration
+
+The RP2350 board includes a PCF85063 real-time clock, but real dated save
+labels would still require initialization, validity handling, and persistence
+validation. That complexity adds little to the pocket-Doom experience, and the
+user explicitly prefers a simple name over clock plumbing.
+
+Handheld saves now reuse Doom's own current level title and append the selected
+slot number: `HANGAR 1`, `HANGAR 2`, and so on. The engine's `E1M1:` or
+`LEVEL 1:` prefix is removed, the result is uppercased, and unusually long
+titles are truncated to remain inside Doom's original 23-visible-character
+save label. The six slot numbers keep otherwise identical saves distinct. No
+RTC, new persistent state, save-header expansion, or file-format change is
+introduced.
+
+## 2026-08-18 — Reject the lightweight speaker-mastered music candidate
+
+The first physical build was effectively silent. Returning to Doom's known
+8/15 music gain and relaxing the music high-pass did not recover a coherent
+track; gameplay produced clearly distorted intermittent "puf" bursts instead.
+Stop this experiment rather than exposing the speaker to more arbitrary gain
+or filter changes.
+
+The burst pattern is consistent with generated audio blocks separated by queue
+underflow, because the heavier renderer adds per-voice harmonic/envelope work
+and per-sample filters while the DMA queue substitutes silence on a missed
+refill. This is not yet a measured underflow count, so preserve it as the
+leading diagnosis rather than a proven root cause. Either way, the design
+fails the product gate. Restore exact effects-only F18. Any later music attempt
+must use the separately gated fixed-memory OPL2 route and add refill-cost or
+underflow instrumentation before listening.
+
+## 2026-08-18 — Test music-only speaker mastering before importing full OPL2
+
+The first music experiment proved that the WAD/MUSX/audio path works, but its
+raw square, saw, pulse, and noise oscillators were unpleasant on the 12x10mm
+speaker. Static memory was not the cause: the backend added only 1,324 bytes.
+Do not change the codec or accepted SFX path to compensate for a poor source.
+
+Add a default-on mastering layer inside optional music builds: continuous
+timbres with attack/release, filtered percussion, music-only high/low-pass and
+peak control, Doom's audible 8/15 default, and temporary ducking under SFX. The new
+candidate adds only 48 bytes over the old music build and remains separately
+gated by `DOOM_ENABLE_MUSIC`. If the physical listening test still sounds
+obviously synthetic, the next step is a fixed-memory port of upstream's proven
+OPL2 path; do not continue arbitrary oscillator/volume tuning.
+
+## 2026-08-18 — Generate save labels on keyboard-free handheld builds
+
+The vanilla Save Game flow opens a text editor and refuses to save an empty
+description. Doom already auto-names an empty slot selected through its joypad
+event path, but this device's touch and physical controls intentionally post
+keyboard events, so that fallback is unreachable.
+
+Add `DOOM_HANDHELD_AUTO_SAVE_NAMES` as a default-off compile-time option. When
+enabled, selecting any save slot immediately writes the game with a compact
+label such as `S1 E1M1 03:42` (or `S1 MAP01 03:42` for commercial maps). This
+uses the slot, current map, and elapsed level time, so it needs neither a
+keyboard nor a configured real-time clock. Existing keyboard builds preserve
+the original editable-description flow. Hardware validation must cover both
+creating and overwriting a slot and loading it after reboot before the option
+joins the accepted handheld configuration.
+
 ## 2026-08-18 — Measure and lock the F18 full-panel performance baseline
 
 The optional documentation capture is complete. After the normal three-second

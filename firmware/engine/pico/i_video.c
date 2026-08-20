@@ -71,7 +71,7 @@
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include "pico/time.h"
-#if DOOM_BOOT_NEXT_WEAPON
+#if DOOM_BOOT_NEXT_WEAPON || DOOM_FLASH_SAFE_SAVES
 #include "pico/flash.h"
 #endif
 #include "hardware/gpio.h"
@@ -102,12 +102,14 @@ volatile uint8_t interp_in_use; // referenced by pd_render.cpp; we never set it,
 // display has been set up?
 static boolean initialized = false;
 
-#if DOOM_BOOT_NEXT_WEAPON
-static volatile boolean boot_input_flash_safe_ready = false;
+#if DOOM_BOOT_NEXT_WEAPON || DOOM_FLASH_SAFE_SAVES
+static volatile boolean flash_safe_ready = false;
+#endif
 
+#if DOOM_BOOT_NEXT_WEAPON
 boolean I_BootInputFlashSafeReady(void)
 {
-    return boot_input_flash_safe_ready;
+    return flash_safe_ready;
 }
 #endif
 
@@ -1329,10 +1331,11 @@ static void present_frame_to_amoled(void) {
 // waits) completely unchanged. What's gone is scanvideo_setup()/the DVI
 // IRQ - replaced with a direct call to present the frame once it's ready.
 static void core1(void) {
-#if DOOM_BOOT_NEXT_WEAPON
+#if DOOM_BOOT_NEXT_WEAPON || DOOM_FLASH_SAFE_SAVES
     // flash_safe_execute() on core0 may proceed only after the other core has
-    // registered its lockout handler. A failure leaves BOOT input disabled.
-    boot_input_flash_safe_ready = flash_safe_execute_core_init();
+    // registered its lockout handler. BOOT and safe saves both use this one
+    // SDK coordinator; a failure makes their safe operation return an error.
+    flash_safe_ready = flash_safe_execute_core_init();
 #endif
     sem_release(&core1_launch);
     while (true) {

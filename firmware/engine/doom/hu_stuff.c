@@ -384,6 +384,46 @@ void HU_Stop(void)
     headsupactive = false;
 }
 
+const char *HU_GetLevelTitle(void)
+{
+    const char *s;
+
+    switch (logical_gamemission)
+    {
+      case doom:
+	s = HU_TITLE;
+	break;
+#if !DEMO1_ONLY
+      case doom2:
+	s = HU_TITLE2;
+        // Pre-Final Doom compatibility: map33-map35 names don't spill over
+        if (gameversion <= exe_doom_1_9 && gamemap >= 33)
+        {
+            s = "";
+        }
+	break;
+      case pack_plut:
+	s = HU_TITLEP;
+	break;
+      case pack_tnt:
+	s = HU_TITLET;
+#endif
+	break;
+      default:
+        s = "Unknown level";
+        break;
+    }
+
+#if !DOOM_ONLY
+    if (logical_gamemission == doom && gameversion == exe_chex)
+    {
+        s = HU_TITLE_CHEX;
+    }
+#endif
+
+    return DEH_String(s);
+}
+
 void HU_Start(void)
 {
 
@@ -410,44 +450,9 @@ void HU_Start(void)
 		       HU_TITLEX, HU_TITLEY,
 		       hu_font,
 		       HU_FONTSTART);
-    
-    switch ( logical_gamemission )
-    {
-      case doom:
-	s = HU_TITLE;
-	break;
-#if !DEMO1_ONLY
-      case doom2:
-	 s = HU_TITLE2;
-         // Pre-Final Doom compatibility: map33-map35 names don't spill over
-         if (gameversion <= exe_doom_1_9 && gamemap >= 33)
-         {
-             s = "";
-         }
-	 break;
-      case pack_plut:
-	s = HU_TITLEP;
-	break;
-      case pack_tnt:
-	s = HU_TITLET;
-#endif
-	break;
-      default:
-         s = "Unknown level";
-         break;
-    }
 
-#if !DOOM_ONLY
-    if (logical_gamemission == doom && gameversion == exe_chex)
-    {
-        s = HU_TITLE_CHEX;
-    }
-#endif
+    s = HU_GetLevelTitle();
 
-    // dehacked substitution to get modified level name
-
-    s = DEH_String(s);
-    
     while (*s)
 	HUlib_addCharToTextLine(&w_title, *(s++));
 

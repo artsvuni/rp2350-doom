@@ -46,6 +46,7 @@
 
 void HU_Init(void);
 void HU_Start(void);
+const char *HU_GetLevelTitle(void);
 
 boolean HU_Responder(event_t* ev);
 
@@ -61,4 +62,3 @@ extern const constcharstar chat_macros[10];
 #endif
 
 #endif
-

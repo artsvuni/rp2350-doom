@@ -1,6 +1,161 @@
 # Project Log
 
+## 2026-08-20
+
+### 10:23 — Prepare the cross-machine Doom handoff
+
+- Corrected the README to describe the accepted clock-free save label
+  `SAVED GAME 1 - HANGAR` instead of the discarded elapsed-time format.
+- Recorded the remaining keyboard-only Quit Game prompt as the next small
+  device-UI task: short PWR confirms, PWR hold/Escape cancels.
+- Refreshed project context and the next-session prompt before publishing the
+  accumulated Doom milestone.
+- Rebuilt the latest full-panel save target successfully with the project-owned
+  ARM GNU 15.3 toolchain. The unpinned Homebrew GCC 16.2 path still lacks
+  newlib and is not a valid source check.
+
 ## 2026-08-18
+
+### 22:34 — Close the session on effects-only audio
+
+- Wrapped with the slot-first save-name direction accepted and candidate
+  `fbc4553b...` installed and programmer-verified.
+- Kept effects-only audio as the product baseline; the accepted SFX path is
+  unchanged and music remains optional/deferred.
+- Preserved the next music attempt as fixed-memory OPL2 with refill-cost and
+  underflow instrumentation before another physical listening test.
+- Save load, overwrite, and reboot persistence remain the first small checks
+  when the project resumes.
+
+### 22:30 — Put the save slot first in generated names
+
+- Changed the handheld format to `SAVED GAME 1 - HANGAR`, with the digit taken
+  directly from the selected save slot.
+- Bounded the level-title portion to eight characters and trimmed a trailing
+  space after clipping, preserving Doom's original 23-character label limit.
+- Built, installed, and programmer-verified full-panel effects-only UF2
+  `fbc4553b6fa196cee17b99f53153398109c4e167f2572e32a47ecee7d2136d22`;
+  the board returned to application mode automatically.
+
+### 22:32 — Install the level-and-slot naming candidate
+
+- Installed and programmer-verified full-panel effects-only UF2
+  `5fea76c6a4bb2d5cdb9847d99668d99256cd1ad1ed5856275587c811ae08effa`
+  through the autonomous USB reset path.
+- The board returned to application mode without a physical BOOT press.
+- Physical confirmation of `HANGAR 1` in the save menu remains.
+
+### 22:26 — Simplify handheld save names
+
+- Replaced slot/map/elapsed-time labels with Doom's own level title plus the
+  selected slot number, such as `HANGAR 1`.
+- Removed level-number prefixes, uppercased the result, and bounded long titles
+  to Doom's existing 23-character save-label field.
+- Deliberately skipped RTC integration and made no change to save data format.
+- Built the full-panel effects-only flash-safe-save configuration successfully;
+  naming validation remains.
+
+### 22:35 — Pass the first physical save write
+
+- Hardware-confirmed the revised pause rendezvous and safe flash writer: one
+  automatic save completed and Doom returned normally instead of freezing.
+- Kept acceptance bounded; load, overwrite, and post-reboot persistence remain.
+- Retained the current deterministic `S1 E1M1 03:42`-style label while naming
+  alternatives are assessed separately.
+- Commit: included in this first-save acceptance documentation commit.
+
+### 22:25 — Correct the save diagnosis at the game-tick boundary
+
+- The first flash-safe candidate was definitely installed and verified, but
+  reproduced the identical slot-selection freeze; music remained off
+  intentionally because this was the effects-only save build.
+- Read and verified the final 64 KiB before restoring F18. It remained erased,
+  proving neither attempt reached the first flash-sector write and correcting
+  the earlier driver-first diagnosis.
+- Traced the deadlock: save runs in `TryRunTics()` before `pd_begin_frame()`, so
+  core1 sleeps on `core1_wake`; the inherited pause signalled
+  `render_frame_ready` and waited forever.
+- Added a dedicated core1 pause acknowledgement/resume handshake and retained
+  the later SDK flash lockout. Revised UF2 is
+  `24ac61cc18f4b92c6b0298049336a967aa461ef900dc31e94347689aa46cde1f`;
+  exact F18 is restored pending the next bounded test.
+- Commit: included in this save-pause deadlock fix commit.
+
+### 22:10 — Fix the first real save-write freeze
+
+- The first automatic-save hardware attempt reached slot persistence and
+  froze; exact F18 was immediately restored and verified automatically.
+- Root-caused the freeze to the legacy writer exiting XIP and erasing/programming
+  flash directly while Doom's display/audio core remained active. Generated
+  save naming does not participate in that failure.
+- Added default-off `DOOM_FLASH_SAFE_SAVES`: drain display work, keep audio DMA
+  sources in SRAM, park core 1 with `flash_safe_execute()`, and run only the
+  low-level sector callback from SRAM. A failed lockout aborts the write.
+- Built and installed candidate
+  `9261377673e9422d0e55e86a649f7174ca878e81d69505f2f9e63edaf07afee1`;
+  it adds 88 text bytes, no BSS, and awaits a one-save hardware test.
+- Commit: included in this multicore-safe save fix commit.
+
+### 22:00 — Reject mastered music and begin F18 recovery
+
+- Hardware rejected the corrected-gain candidate: no coherent soundtrack was
+  audible and gameplay produced clearly distorted intermittent "puf" bursts.
+- Stopped the listening experiment immediately; no further gain or filter
+  tuning is justified on this signal.
+- Recorded queue starvation as the leading but unmeasured diagnosis: the
+  heavier generator can miss the bounded audio queue, whose defined fallback
+  is silence, producing isolated audible blocks.
+- Verified the local rollback UF2 is exact accepted F18
+  `5290ec3a571113cc2bb5c701a1c299413d7b9743183c5ecdd4769c26e0e6ac3a`.
+- Two serial-targeted automatic restore attempts could not reach the rejected
+  application's USB reset interface.
+- After Alexander manually entered BOOTSEL, restored exact F18
+  `5290ec3a571113cc2bb5c701a1c299413d7b9743183c5ecdd4769c26e0e6ac3a`;
+  flash verification passed and `picotool reboot -a` returned it to Doom.
+
+### 21:50 — Restore an audible mastered-music test level
+
+- Hardware feedback found the first mastered candidate effectively silent.
+- Confirmed the music backend, MUSX parser, symbols, and build flags are present;
+  the candidate had instead reduced the score by about 12dB before accounting
+  for the smoother waveform's lower RMS level.
+- Restored Doom's proven 8/15 starting level and unity music master, retained
+  peak control and SFX ducking, and relaxed the music-only high-pass from about
+  160Hz to 90Hz so low title material remains audible.
+- Rebuilt candidate
+  `2535e3600cdfbe9ac44577405ef276f1ef85a397fabd9e34a7b3e92a7ce51875`
+  with unchanged `__end__=0x2004a14c`; flash and listening validation are pending.
+
+### 21:35 — Build a small-speaker music-quality candidate
+
+- Measured the original optional backend at 1,324 static bytes and 6,536 text
+  bytes over effects-only F18, ruling out memory burden as the reason it
+  sounded poor.
+- Audited the real signal path: nine raw discontinuous oscillators and
+  full-band noise feed the 44.1kHz mono mixer, ES8311 codec, NS4150B amp, and
+  12x10mm 8-ohm speaker without music-specific mastering.
+- Compared volume-only, codec DSP, authentic upstream OPL2, and prerecorded
+  ADPCM approaches. Selected a reversible source-and-mix improvement before a
+  much larger OPL import.
+- Added continuous timbres, short attack/release envelopes, filtered
+  percussion, music-only high/low-pass filtering, peak control, 4/15 starting
+  volume, and SFX ducking. The accepted SFX and codec setup are unchanged.
+- Built full-panel music/save candidate
+  `cfa84000ec33a560f1a3c20c9f466e27550292f81d31cc87317621f1ba74c16a`;
+  it ends at `0x2004a14c` with about 218,804 zone bytes left.
+- Verified mastering-off reproduces the old music UF2 exactly and music-off
+  reproduces accepted F18 exactly. Physical listening is pending.
+
+### 21:30 — Add a keyboard-free save candidate
+
+- Traced the failed handheld save flow to Doom's keyboard-only description
+  editor: the existing joypad auto-name fallback is unreachable because this
+  port correctly posts touch and button actions as keyboard events.
+- Added a default-off handheld option that immediately saves a selected slot
+  with a deterministic slot/map/elapsed-time label such as `S1 E1M1 03:42`.
+- Preserved vanilla text entry for builds without the option and avoided any
+  dependency on an unconfigured real-time clock.
+- Build and hardware create/overwrite/reboot-load validation are pending.
 
 ### 20:53 — Record the F18 full-panel performance baseline
 

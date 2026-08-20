@@ -8,6 +8,7 @@
 
 #include "picoflash.h"
 #include "pico/bootrom.h"
+#include "pico/flash.h"
 
 #define FLASH_BLOCK_ERASE_CMD 0xd8
 
@@ -54,4 +55,24 @@ void __no_inline_not_in_flash_func(picoflash_sector_program)(uint32_t flash_offs
     flash_range_program(flash_offs, data, FLASH_SECTOR_SIZE);
     flash_flush_cache(); // Note this is needed to remove CSn IO force as well as cache flushing
     flash_enable_xip_via_boot2(boot2_copyout);
+}
+
+typedef struct {
+    uint32_t flash_offs;
+    const uint8_t *data;
+} picoflash_safe_program_t;
+
+static void __no_inline_not_in_flash_func(picoflash_safe_program_callback)(void *param) {
+    const picoflash_safe_program_t *program = param;
+    picoflash_sector_program(program->flash_offs, program->data);
+}
+
+bool picoflash_sector_program_safe(uint32_t flash_offs, const uint8_t *data,
+                                   uint32_t timeout_ms) {
+    picoflash_safe_program_t program = {
+        .flash_offs = flash_offs,
+        .data = data,
+    };
+    return flash_safe_execute(picoflash_safe_program_callback, &program,
+                              timeout_ms) == PICO_OK;
 }

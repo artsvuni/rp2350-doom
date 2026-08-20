@@ -5,10 +5,10 @@
  * compact MUSX event stream. The original rp2040-doom port renders it through
  * a full emu8950 OPL emulator, but that path allocates state dynamically and
  * is relatively expensive. This backend instead plays the real MUSX notes
- * with nine tiny integer oscillators. It is intentionally "chiptune" rather
- * than cycle-accurate AdLib: predictable memory and render time matter more
- * on this board, and the result is mixed into the existing non-blocking DMA
- * sound-effect path.
+ * with nine tiny integer oscillators. The optional speaker-mastering path
+ * rounds their timbre, removes note-edge clicks, constrains the spectrum for
+ * the board's 12x10mm speaker, and keeps the score behind sound effects. It is
+ * still not cycle-accurate AdLib, but remains fixed-memory and bounded-time.
  */
 
 #include "config.h"
@@ -87,6 +87,11 @@ typedef struct
     uint8_t velocity;
     uint8_t gain;
     uint8_t waveform;
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+    uint16_t envelope;
+    int16_t noise_filter;
+    boolean releasing;
+#endif
     boolean active;
 } music_voice_t;
 
@@ -109,6 +114,11 @@ static boolean restart_pending;
 static uint8_t music_volume = 64;
 static uint32_t voice_age;
 static uint32_t noise_state = 0x13579bdfu;
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+static int32_t music_filter_input;
+static int32_t music_highpass;
+static int32_t music_lowpass;
+#endif
 static uint64_t samples_to_event;
 static midi_file_t *song_file;
 static midi_track_iter_t *song_iter;
@@ -160,6 +170,11 @@ static void refresh_channel_gains(unsigned int channel)
 static void silence_voices(void)
 {
     memset(voices, 0, sizeof(voices));
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+    music_filter_input = 0;
+    music_highpass = 0;
+    music_lowpass = 0;
+#endif
 }
 
 static void reset_channels(void)
@@ -203,7 +218,11 @@ static void note_off(unsigned int channel, unsigned int note)
         if (voices[i].active && voices[i].channel == channel
          && voices[i].note == note)
         {
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+            voices[i].releasing = true;
+#else
             voices[i].active = false;
+#endif
         }
     }
 }
@@ -230,6 +249,11 @@ static void note_on(unsigned int channel, unsigned int note,
     voice->velocity = (uint8_t)velocity;
     voice->waveform = channel == 9 ? 4
         : (music_channels[channel].program >> 4) & 3;
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+    voice->envelope = 0;
+    voice->noise_filter = 0;
+    voice->releasing = false;
+#endif
     voice->active = true;
     voice->gain = voice_gain(voice);
 }
@@ -284,7 +308,14 @@ static void process_event(const midi_event_t *event)
             {
                 for (unsigned int i = 0; i < MUSIC_VOICES; ++i)
                 {
-                    if (voices[i].channel == channel) voices[i].active = false;
+                    if (voices[i].channel == channel)
+                    {
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+                        voices[i].releasing = true;
+#else
+                        voices[i].active = false;
+#endif
+                    }
                 }
             }
             break;
@@ -323,6 +354,66 @@ static int32_t oscillator_sample(music_voice_t *voice)
     int32_t wave;
 
     voice->phase += voice->step;
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+    // Fast attack removes the hard phase-reset click without making Doom's
+    // score feel sluggish. A short release removes note-off clicks and gives
+    // the tiny speaker a little space between dense events.
+    if (voice->releasing)
+    {
+        if (voice->envelope <= 12u)
+        {
+            voice->active = false;
+            return 0;
+        }
+        voice->envelope -= 12u;
+    }
+    else if (voice->envelope < 32767u)
+    {
+        uint32_t next = voice->envelope + 160u;
+        voice->envelope = next > 32767u ? 32767u : (uint16_t)next;
+    }
+
+    // Integer parabolic sine approximation. Unlike the old square/saw/pulse
+    // set it does not inject large discontinuities at every period boundary.
+    int32_t x = (int16_t)(phase >> 16);
+    int32_t sine = (x * (32768 - (x < 0 ? -x : x))) >> 13;
+    int32_t harmonic;
+
+    switch (voice->waveform)
+    {
+        case 0: // mellow fundamental
+            wave = sine;
+            break;
+        case 1: // triangle: brighter but still continuous
+        {
+            uint32_t p = phase >> 16;
+            wave = p < 32768u ? (int32_t)(p << 1) - 32768
+                              : 98303 - (int32_t)(p << 1);
+            break;
+        }
+        case 2: // fundamental plus a restrained second harmonic
+            x = (int16_t)((phase * 2u) >> 16);
+            harmonic = (x * (32768 - (x < 0 ? -x : x))) >> 13;
+            wave = sine + (harmonic >> 2);
+            break;
+        case 3: // fundamental plus a quieter third harmonic
+            x = (int16_t)((phase * 3u) >> 16);
+            harmonic = (x * (32768 - (x < 0 ? -x : x))) >> 13;
+            wave = sine + (harmonic >> 3);
+            break;
+        default: // percussion: low-pass the deterministic noise per voice
+            noise_state ^= noise_state << 13;
+            noise_state ^= noise_state >> 17;
+            noise_state ^= noise_state << 5;
+            harmonic = (int16_t)(noise_state >> 16);
+            voice->noise_filter += (harmonic - voice->noise_filter) >> 3;
+            wave = voice->noise_filter;
+            break;
+    }
+
+    int32_t sample = (wave * voice->gain) >> 11;
+    return (sample * voice->envelope) >> 15;
+#else
     switch (voice->waveform)
     {
         case 0: // triangle
@@ -350,7 +441,31 @@ static int32_t oscillator_sample(music_voice_t *voice)
     }
 
     return (wave * voice->gain) >> 11;
+#endif
 }
+
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+static int32_t master_music_sample(int32_t mixed)
+{
+    // Approximately 90Hz DC/high-pass followed by a 7kHz low-pass at 44.1kHz.
+    // This removes DC and the most brittle oscillator harmonics without
+    // erasing the title score's low material. Coefficients are Q15 and require
+    // no floating point.
+    int32_t highpass = music_highpass + mixed - music_filter_input;
+    music_filter_input = mixed;
+    music_highpass = (int32_t)(((int64_t)32352 * highpass) >> 15);
+    music_lowpass += (int32_t)(((int64_t)16384
+                              * (music_highpass - music_lowpass)) >> 15);
+
+    // Gentle peak knee, not hard clipping. At this level the limiter should
+    // act only on unusually dense passages.
+    if (mixed > 12000) mixed = 12000 + ((mixed - 12000) >> 2);
+    else if (mixed < -12000) mixed = -12000 + ((mixed + 12000) >> 2);
+    if (mixed > 16000) mixed = 16000;
+    else if (mixed < -16000) mixed = -16000;
+    return mixed;
+}
+#endif
 
 static void render_voices(int16_t *samples, size_t count)
 {
@@ -361,6 +476,9 @@ static void render_voices(int16_t *samples, size_t count)
         {
             if (voices[i].active) mixed += oscillator_sample(&voices[i]);
         }
+#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+        mixed = master_music_sample(mixed);
+#endif
         if (mixed > 32767) mixed = 32767;
         else if (mixed < -32768) mixed = -32768;
         samples[s] = (int16_t)mixed;

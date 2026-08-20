@@ -2697,7 +2697,12 @@ typedef struct {
     int size;
 } flash_write_element;
 
+#if DOOM_FLASH_SAFE_SAVES
+#define SAVE_FLASH_SAFE_TIMEOUT_MS 1000u
+static bool __no_inline_not_in_flash_func(write_flash_elements)(const flash_write_element *elements, int num, const uint8_t *low_dest, const uint8_t *high_dest, uint8_t *buffer4k, bool forwards) {
+#else
 static void __no_inline_not_in_flash_func(write_flash_elements)(const flash_write_element *elements, int num, const uint8_t *low_dest, const uint8_t *high_dest, uint8_t *buffer4k, bool forwards) {
+#endif
     static_assert(FLASH_SECTOR_SIZE == 4096, "");
     const uint8_t *first_sector = (const uint8_t *)(((uintptr_t)low_dest)&~(FLASH_SECTOR_SIZE-1));
     const uint8_t *last_sector = (const uint8_t *)(((uintptr_t)high_dest-1)&~(FLASH_SECTOR_SIZE-1));
@@ -2731,11 +2736,22 @@ static void __no_inline_not_in_flash_func(write_flash_elements)(const flash_writ
                 memmove(buffer4k + (to - sector), elements[i].src + from_offset, size);
             }
         }
+#if DOOM_FLASH_SAFE_SAVES
+        if (!picoflash_sector_program_safe((uintptr_t)sector - XIP_BASE,
+                                           buffer4k,
+                                           SAVE_FLASH_SAFE_TIMEOUT_MS)) {
+            return false;
+        }
+#else
         uint32_t save = save_and_disable_interrupts();
         picoflash_sector_program((uintptr_t)sector - XIP_BASE, buffer4k);
         restore_interrupts(save);
+#endif
     }
 //    spin_unlock(spin_lock_instance(PICO_SPINLOCK_ID_HARDWARE_CLAIM), save);
+#if DOOM_FLASH_SAFE_SAVES
+    return true;
+#endif
 }
 
 boolean __noinline P_SaveGameWriteFlashSlot(int slot, const uint8_t *buffer, uint size, uint8_t *buffer4k) {
@@ -2778,7 +2794,15 @@ boolean __noinline P_SaveGameWriteFlashSlot(int slot, const uint8_t *buffer, uin
                 .src = from_bottom
         };
 //        printf("Need to move %p->%p (+%04x) to %p->%p\n", from_bottom, from_top, element.size, to_top - element.size, to_top);
-        write_flash_elements(&element, 1, to_top - element.size, to_top, buffer4k, to_top < from_top);
+#if DOOM_FLASH_SAFE_SAVES
+        if (!write_flash_elements(&element, 1, to_top - element.size, to_top,
+                                  buffer4k, to_top < from_top)) {
+            goto flash_write_failed;
+        }
+#else
+        write_flash_elements(&element, 1, to_top - element.size, to_top,
+                             buffer4k, to_top < from_top);
+#endif
     }
     if (buffer) {
         uint8_t high_marker[] = {
@@ -2805,8 +2829,15 @@ boolean __noinline P_SaveGameWriteFlashSlot(int slot, const uint8_t *buffer, uin
                         .size = 4,
                 }
         };
+#if DOOM_FLASH_SAFE_SAVES
+        if (!write_flash_elements(elements, count_of(elements), prev_slot_bottom - 8 - size,
+                                  prev_slot_bottom, buffer4k, true)) {
+            goto flash_write_failed;
+        }
+#else
         write_flash_elements(elements, count_of(elements), prev_slot_bottom - 8 - size, prev_slot_bottom, buffer4k,
                              true);
+#endif
     } else if (slot == last_slot && slots[slot].data) {
 //        printf("Nuking slot %d\n", slot);
         uint8_t dummy[4] = {0};
@@ -2815,10 +2846,22 @@ boolean __noinline P_SaveGameWriteFlashSlot(int slot, const uint8_t *buffer, uin
                 .dest = slots[slot].data + slots[slot].size,
                 .src = dummy
         };
+#if DOOM_FLASH_SAFE_SAVES
+        if (!write_flash_elements(&element, 1, element.dest, element.dest+4, buffer4k, true)) {
+            goto flash_write_failed;
+        }
+#else
         write_flash_elements(&element, 1, element.dest, element.dest+4, buffer4k, true);
+#endif
     }
     pd_end_save_pause();
     return true;
+
+#if DOOM_FLASH_SAFE_SAVES
+flash_write_failed:
+    pd_end_save_pause();
+    return false;
+#endif
 }
 
 #endif

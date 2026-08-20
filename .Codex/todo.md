@@ -79,6 +79,9 @@
   occupies only 20 visible game-image pixels at 448x336 (passed; issue fixed).
 - [ ] A/B test an explicitly menu-only swipe mode against F17 fixed-zone menu
   navigation; do not change gameplay or intermission routing.
+- [ ] Replace Doom's keyboard-specific Quit Game prompt with `TAP PWR TO
+  QUIT`, and translate a short PWR/menu-confirm tap to `key_menu_confirm` only
+  while a Y/N dialog is active. Preserve PWR hold/Escape as cancel.
 - [ ] Explore a polished permanent visual treatment for the helpful control guides after interaction mapping is locked.
 - [x] After touch-only controls are locked, decide whether motion still earns a role (no continuous tilt after F10; use explicit touch dodge gestures).
 - [x] Do not add a recenter action after continuous roll control was rejected.
@@ -95,7 +98,27 @@
 - [x] Hardware-test menu/gameplay SFX and immediate frame pacing in the effects-only build.
 - [x] Implement a fixed-memory MUSX music backend and compatible named-lump playback path.
 - [x] Hardware-test music playback and confirm the MUSX/WAD/backend path works.
-- [ ] Experiment with higher-quality optional music synthesis before reconsidering the default.
+- [x] Research the speaker/codec, current synthesis failure, upstream OPL2,
+  prerecorded-audio fallback, and performance/memory trade-offs.
+- [x] Build a reversible speaker-mastered fixed-memory music candidate with
+  smoother voices, note envelopes, music-only filtering, peak control, lower
+  default level, and SFX ducking.
+- [x] Hardware-listen to the mastered title/menu and E1M1 (rejected: first
+  build was inaudible; corrected gain emitted distorted intermittent bursts).
+- [x] Restore exact effects-only F18 after manually entering BOOTSEL; flash
+  verification passed and the board rebooted into application mode.
+- [ ] If music is revisited, port upstream OPL2 with fixed static state and no
+  `calloc`, instrumenting refill cost/underflow before physical listening.
+- [x] Add a default-off keyboard-free save mode that immediately generates
+  slot/map/elapsed-time labels without requiring an RTC.
+- [ ] Hardware-test creating and overwriting an automatic save, then loading it
+  after a normal reboot. Two attempts froze before any save-area byte changed;
+  the corrected game-tick/core1 pause candidate successfully created one save.
+  Load, overwrite, and post-reboot persistence remain.
+- [x] Replace slot/map/time labels with the simpler Doom level title plus slot
+  number (`HANGAR 1`, `HANGAR 2`, and so on), without RTC integration.
+- [x] Refine the final label order to `SAVED GAME <slot> - <level>`, with the
+  number dictated by the selected save slot.
 - [x] Add compile-out frame timing for game, render, core rendezvous, presentation packing, AMOLED transfer, cadence, and DMA timeout recovery.
 - [x] Make 320x200, 384x240, 416x260, and 448x280 presentation modes selectable from CMake and verify all four Release builds.
 - [ ] Capture comparable on-device 320x200 and 448x280 profiler logs using the same gameplay route.
