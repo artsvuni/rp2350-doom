@@ -1,5 +1,161 @@
 # Decisions Log
 
+## 2026-08-20 — Suspend synthesis while music is muted
+
+Compiling the accepted music backend into normal firmware adds 1,320 bytes of
+fixed SRAM whether or not it is audible. The first muted-default image still
+attached its generator when Doom started a song, so volume zero continued to
+parse MIDI events, evaluate up to nine oscillators per sample, and keep the
+audio queue active. Muting therefore saved no meaningful CPU time.
+
+Make generator attachment follow the real playback state: a song must be
+playing, unpaused, and have non-zero Music Volume. At zero the iterator and
+voice state remain fixed in SRAM but the shared sound backend can sleep between
+sound effects. Raising Music Volume reattaches the generator and resumes the
+current song without allocation or WAD access. Apply the same detachment while
+paused. Stop, unregister, and shutdown retain their defensive early detach and
+also resolve the final generator state while holding the music mutex, avoiding
+a stale reattachment during cross-core transitions.
+
+The exact accepted full-panel configuration builds successfully with unchanged
+`__end__=0x2004a150` and 218,800 bytes of calculated Doom-zone headroom. The
+candidate UF2 SHA-256 is
+`e97168255564a6e5b13b2c5eaed03ecb3abb3baf360601cb232dcdfc1543ebb6`.
+It was installed through autonomous USB reset, flash-verified, and rebooted to
+application mode without changing the WHX or save sectors. Physical
+confirmation of default silence, normal SFX, and menu opt-in remains separate.
+
+## 2026-08-20 — Ship the accepted music engine muted by default
+
+The lightweight fixed-memory MUSX backend is now part of the normal handheld
+firmware, but Doom's on-device Music Volume starts at zero. Sound effects keep
+their existing default. A player can opt into the score through Doom's normal
+Options menu without installing another image; a fresh boot returns to the
+preferred effects-only experience because this tiny build deliberately does
+not persist a general configuration file.
+
+Accept the original lightweight synth with mastering and the rejected smooth
+profile disabled. Hardware listening accepted percussion at 50% of its
+original channel gain after 80% and 60% remained too prominent. Tonal voices,
+sound effects, sample rate, codec setup, buffering, display, and controls are
+unchanged. `DOOM_ENABLE_MUSIC=OFF` remains available only as a smaller
+engineering rollback that compiles the music backend out completely.
+
+The final 448x368 Release image builds with ARM GNU 15.3 at
+`__end__=0x2004a150`, leaving 218,800 bytes of calculated Doom-zone headroom.
+Its UF2 SHA-256 is
+`23509004714b0409ee3a7efea432ea8840d302cee410de92c6541570672dfee0`.
+It was installed through autonomous USB reset, flash-verified, and rebooted to
+application mode without changing the separately stored WHX or save sectors.
+Physical confirmation should check silence at boot, normal SFX, and successful
+music opt-in through Options; programmer verification alone cannot prove those
+audible behaviours.
+
+## 2026-08-20 — Refine the accepted edge direction to 30px
+
+The installed 28px LEFT/BACK candidate received a positive initial hardware
+assessment: it feels nice overall. Continue in the same direction with one
+small reversible step rather than changing the control model.
+
+Set LEFT to 30px wide and BACK/DOWN to 30px high. The unchanged
+`[0,340)x[70,368)` footprint now yields LEFT 30x268, UP 106x268, RIGHT
+204x268, and DOWN 340x30. Visible guides, gameplay and menu hit testing,
+diagonal boundary placement, double-tap Use, BOOT-hold strafe, and
+release-to-stop remain coupled through the same constants.
+
+The full-panel effects-only build succeeds with UF2 SHA-256
+`41d59b392549fd7e7c86192ae4304162a94e7796cac341bfe24ed915dc1ba482`.
+`__end__=0x20049c28` and calculated zone headroom remain 220,120 bytes.
+It was installed and flash-verified through autonomous USB reset, and the
+board returned to application USB. Physical confirmation remains.
+
+## 2026-08-20 — Enlarge LEFT and BACK without changing the control footprint
+
+The four guide outlines are not a second control system: their boundaries and
+the touch hit testing use the same shared constants. Gameplay additionally has
+two 12px forward-turn transition bands centred on the LEFT/UP and UP/RIGHT
+boundaries, which is why an exact hit-area report subdivided the visible
+rectangles. Those bands are combined directions, not invisible alternative
+buttons.
+
+For a reversible physical comparison, widen LEFT from 24px to 28px and raise
+BACK/DOWN from 20px to 28px. Keep the overall control footprint fixed at
+`[0,340)x[70,368)`. The resulting visible and cardinal boundaries are LEFT
+28x270, UP 108x270, RIGHT 204x270, and DOWN 340x28. The existing diagonal
+bands remain 12px wide and move with the LEFT/UP boundary. Menus, gameplay,
+guide rendering, in-zone Use, BOOT-hold strafe, and release-to-stop all consume
+the same updated constants.
+
+The full-panel effects-only build succeeds with UF2 SHA-256
+`26a6f2b9daa27a26e7eda5cf38f6214b5b1d218cb6e620408e36fb2a3c4ac846`.
+`__end__=0x20049c28` and calculated zone headroom remain 220,120 bytes. Treat
+this as a candidate until the physical thumb-reach and boundary test passes.
+It was installed and flash-verified through autonomous USB reset, and the
+board returned to application USB.
+
+## 2026-08-20 — Make embedded Quit Game power off instead of entering ENDOOM
+
+The first handheld confirmation candidate correctly accepted a short PWR tap,
+but the device then appeared frozen and could no longer reopen the menu. This
+was not an input failure. The inherited `I_Quit()` stopped normal gameplay,
+switched toward the desktop ENDOOM/text-screen exit path, and then waited in a
+permanent event loop. `D_Endoom()` is intentionally empty in this Pico build,
+so a bare-metal device with no host operating system had nowhere visible or
+useful to go.
+
+For on-device builds, replace that dead end with the AXP2101's documented
+software power-off command: preserve REG 0x10 and set bit 0. Shut down Doom's
+audio backend first. Arm a one-second RP2350 watchdog reboot before the I2C
+write, so a failed PMIC transaction or an unexpected USB-power condition
+restarts Doom rather than leaving another inert screen. This does not change
+any regulator voltage, physical PWR timing, BOOT behavior, save format, or
+desktop exit path. The prompt now says `TAP PWR TO POWER OFF`.
+
+The full-panel effects-only save build succeeds with pinned ARM GNU 15.3.
+Candidate UF2 SHA-256 is
+`4e1d3595c2db839024879b9f10f305a8000721a5728ba3148ba671668ddad6db`,
+`__end__=0x20049c28`, and calculated zone headroom remains 220,120 bytes. The
+failed quit loop no longer exposes the Pico USB reset interface, so physical
+long-PWR recovery is required before this candidate can be installed and its
+  shutdown/fallback behavior hardware-validated. The final requested prompt
+  text is `Press PWR to quit.` A subsequent reported non-shutdown is not yet
+  valid evidence against this PMIC-off candidate: it had not been installed or
+  programmer-verified from this Mac, and the device remained inaccessible in
+  the older quit loop. The next gate must verify the installed checksum before
+  comparing USB-powered and battery-only shutdown behavior. Rebuilding with
+  the final wording produces UF2 SHA-256
+  `9ae3312825067e65618a9da2a7553afbcd692870052f9f717b76d723faafc3cf`
+  with unchanged `__end__` and zone headroom. This exact image was then
+  installed and flash-verified through serial-targeted autonomous reset after
+  granting picotool direct USB access. The board returned to application USB.
+  Alexander then confirmed the USB-connected quit path works on hardware and
+  no longer enters the frozen ENDOOM loop. Accept that path. Battery-only
+  shutdown and hold-to-cancel remain follow-up checks rather than blockers for
+  the corrected quit behavior.
+
+## 2026-08-20 — Make embedded menu confirmation use the handheld PWR vocabulary
+
+Doom's Quit Game message still asked for keyboard Y even though the handheld
+has no keyboard. A short PWR release already emits the normal menu-forward
+Enter key, but `M_Responder()` accepted only Y, N, Space, or Escape while a
+confirmation message owned input. The result was a visible, responsive dialog
+that could not be confirmed.
+
+For `DOOM_TINY` only, translate menu-forward/Enter to `key_menu_confirm` inside
+the existing `messageNeedsInput` branch. This keeps the change scoped to an
+active Y/N prompt: gameplay Fire, normal menu selection, desktop Chocolate
+Doom, and the 450 ms PWR hold remain unchanged. PWR hold still emits Escape,
+which closes the prompt without confirming. The embedded quit suffix is now
+`(tap pwr to quit.)`; conventional builds retain `(press y to quit to dos.)`.
+
+The full-panel effects-only save build succeeds with the project-owned ARM GNU
+15.3 toolchain. Candidate UF2 SHA-256 is
+`7b3448ee427ac05a4d6cbe86d50cc4538a7a9a6a1ca37e2235cd02b3a6f0ff7b`,
+`__end__=0x20049c28`, and calculated zone headroom remains 220,120 bytes. It was
+installed through the serial-targeted autonomous reset path, verified by
+`picotool`, and returned to application USB. Physical confirmation of the text,
+short-tap quit, and hold-to-cancel paths remains required.
+
 ## 2026-08-18 — Put the save-slot identity before the level title
 
 Refine the clock-free label to read like a conventional save entry:

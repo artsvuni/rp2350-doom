@@ -14,8 +14,10 @@
 #include "DEV_Config.h"
 
 #define AXP2101_I2C_ADDR    0x34
+#define REG_COMMON_CONFIG   0x10
 #define REG_IRQ_ENABLE1     0x41
 #define REG_IRQ_STATUS1     0x49
+#define BIT_SOFTWARE_OFF    (1 << 0)
 #define BIT_SHORT_PRESS     (1 << 3)
 #define BIT_LONG_PRESS      (1 << 2)
 #define BIT_NEGATIVE_EDGE   (1 << 1)
@@ -52,4 +54,14 @@ pwr_button_event_t pwr_button_poll(void)
     if (button_status & BIT_NEGATIVE_EDGE) result |= PWR_BUTTON_PRESS_EDGE;
     if (button_status & BIT_POSITIVE_EDGE) result |= PWR_BUTTON_RELEASE_EDGE;
     return (pwr_button_event_t)result;
+}
+
+void pwr_button_power_off(void)
+{
+    // Preserve the other common-control bits.  If power-off succeeds this
+    // call never meaningfully returns because the PMIC removes the RP2350's
+    // supply; the caller must provide its own fallback for an I2C failure.
+    uint8_t common = DEV_I2C_ReadByte(AXP2101_I2C_ADDR, REG_COMMON_CONFIG);
+    DEV_I2C_Write(AXP2101_I2C_ADDR, REG_COMMON_CONFIG,
+                  common | BIT_SOFTWARE_OFF);
 }

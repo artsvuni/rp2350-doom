@@ -23,6 +23,7 @@
 #include "doomtype.h"
 #include "doom/p_saveg.h"
 #include "bootlog.h"
+#include "pwr_button.h"
 #endif
 #if USB_SUPPORT
 #include "tusb.h"
@@ -477,6 +478,21 @@ void __attribute((noreturn)) I_Quit (void)
 #endif
     D_Endoom();
     I_StopSong();
+#if PICO_ON_DEVICE
+    // Desktop Doom quits back to an operating system.  This bare-metal port
+    // has nowhere to return to, so the old text-screen path below became a
+    // permanent, apparently frozen loop.  Shut the audio backend down first,
+    // arm a reboot fallback, then ask the AXP2101 to remove system power.
+    // A successful PMIC command cuts power before the watchdog fires.  If the
+    // I2C command fails or the board remains powered by USB, Doom restarts
+    // cleanly instead of trapping the player on an inert screen.
+    I_ShutdownSound();
+    watchdog_reboot(0, 0, 1000);
+    pwr_button_power_off();
+    while (true) {
+        tight_loop_contents();
+    }
+#else
     while (!sem_available(&display_frame_freed)) {
         I_UpdateSound();
     }
@@ -498,6 +514,7 @@ void __attribute((noreturn)) I_Quit (void)
 #endif
         I_UpdateSound();
     }
+#endif
 }
 
 

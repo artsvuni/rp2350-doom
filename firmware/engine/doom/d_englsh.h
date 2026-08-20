@@ -60,7 +60,11 @@
 #define NETEND	"you can't end a netgame!\n\n"PRESSKEY
 #define ENDGAME	"are you sure you want to end the game?\n\n"PRESSYN
 
+#if DOOM_TINY
+#define DOSY		"Press PWR to quit."
+#else
 #define DOSY		"(press y to quit to dos.)"
+#endif
 
 #define DETAILHI	"High detail"
 #define DETAILLO	"Low detail"

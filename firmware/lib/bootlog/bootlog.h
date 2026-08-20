@@ -7,6 +7,11 @@
 void bootlog_init(void);
 void bootlog_print(const char *msg);
 
+// Clear the complete panel through one streamed transaction while reusing the
+// small bootlog strip buffer. Intended for standalone diagnostics that never
+// hand the panel to Doom's normal renderer.
+void bootlog_clear_panel(void);
+
 // Stop normal diagnostic rendering once game graphics owns the panel.
 // A fresh bootlog_init() call enables it again for early failures and OOM.
 void bootlog_disable(void);

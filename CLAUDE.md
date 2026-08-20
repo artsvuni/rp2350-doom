@@ -46,10 +46,12 @@ Milestone 0 (control-input layer validated) is also done — see the same
 file for the register-level detail. A later silent freeze during sustained
 combat is not ordinary zone OOM; persistent OOM reporting is in place.
 Sound effects use a hardware-verified, non-blocking two-buffer DMA/IRQ
-backend. The fixed-memory MUSX music synthesizer also works on hardware, but
-its lightweight chiptune timbre is not enjoyable through this board's small
-speaker. The normal build therefore defaults to effects only; the complete
-music experiment remains available with `-DDOOM_ENABLE_MUSIC=ON`.
+backend. The fixed-memory MUSX music synthesizer is now included in the normal
+firmware but Music Volume starts at zero, preserving the preferred effects-only
+experience. Raising Music Volume in Options enables the accepted lightweight
+score with percussion at 50% of its original gain. At zero, the generator is
+detached so music retains about 1.3 KiB fixed SRAM but consumes no continuous
+synthesis or silent-buffer CPU time.
 Alexander's latest play run progressed into E1M2 without freezing. Treat this
 as strong evidence for the effects-only baseline, not yet proof of unlimited
 long-session stability. Full-width 448x280 now sustains 35.2 presented FPS with
@@ -109,6 +111,7 @@ test rather than a rejected idea.
    swipe mode without changing gameplay or intermission input.
 2. Run a longer combat session, or begin a separate Wolf3D/Spear feasibility
    project and later investigate a two-game launcher.
-3. Keep the locked full-panel pipeline and effects-only audio as defaults.
+3. Keep the locked full-panel pipeline and runtime-muted optional music as the
+   default; do not reopen music work without a concrete regression or goal.
 4. Do not expand BOOT beyond the accepted F15 short release or the explicitly
    gated F15.1 hold candidate without a new safety and interaction review.

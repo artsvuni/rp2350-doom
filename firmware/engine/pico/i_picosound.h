@@ -29,7 +29,10 @@
 // implementation detail of i_picosound.c.
 typedef struct audio_buffer audio_buffer_t;
 
-#define PICO_SOUND_SAMPLE_FREQ 44100
+#ifndef DOOM_AUDIO_SAMPLE_RATE
+#define DOOM_AUDIO_SAMPLE_RATE 44100
+#endif
+#define PICO_SOUND_SAMPLE_FREQ DOOM_AUDIO_SAMPLE_RATE
 
 #ifndef NUM_SOUND_CHANNELS
 #define NUM_SOUND_CHANNELS 8

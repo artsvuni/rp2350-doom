@@ -19,4 +19,9 @@ void pwr_button_enable_edges(void);
    events may be returned together, so test the result as a bit mask. */
 pwr_button_event_t pwr_button_poll(void);
 
+/* Ask the AXP2101 PMIC to turn off every power rail except VRTC.  This is
+   the chip's documented software power-off command (REG 0x10 bit 0); it does
+   not alter rail voltages or the physical PWR-button timing configuration. */
+void pwr_button_power_off(void);
+
 #endif

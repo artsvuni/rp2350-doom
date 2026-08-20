@@ -50,6 +50,9 @@
 #include "qspi_pio.h"
 #include "AMOLED_1in8.h"
 #include "bootlog.h"
+#if DOOM_MUSIC_LAB
+#include "pico/music_lab.h"
+#endif
 //
 // D_DoomMain()
 // Not a globally visible function, just included for source reference,
@@ -167,7 +170,7 @@ int main(int argc, char **argv)
     // do init early to set pulls
     piconet_init();
 #endif
-#if PICO_ON_DEVICE
+#if PICO_ON_DEVICE && !DOOM_MUSIC_LAB
     bootlog_print("4: entering D_DoomMain");
 #endif
 //!

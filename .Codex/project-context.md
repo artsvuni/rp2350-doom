@@ -7,13 +7,21 @@ Its checksum-valid one-minute combat baseline is 34.3 presented FPS with zero
 DMA timeouts. Exact F18 is restored after two rejected save attempts. A revised
 save-only candidate now fixes both the pre-write core1 pause rendezvous and the
 later flash lockout; it is installed and successfully created a save on
-hardware. Load, overwrite, and post-reboot persistence remain, while exact F18
-is still the immediate rollback. The installed follow-up deliberately avoids
+hardware, and Alexander subsequently loaded existing slots 1 and 2
+successfully. Overwrite and explicit post-reboot persistence remain, while
+exact F18 is still the immediate rollback. The installed follow-up deliberately
+avoids
 RTC integration and names each slot in the format `SAVED GAME 1 - HANGAR`,
 where the digit is the selected slot; its flash write was verified, but the
-label has not yet been physically checked in the menu. The session closes with
-effects-only audio intentionally retained; music work is deferred to a later,
-instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
+label has not yet been physically checked in the menu. The normal firmware now
+includes the hardware-accepted lightweight music backend while starting Doom's
+Music Volume at zero, so the preferred default remains effects-only and a
+player can opt into music through Options. The final score keeps mastering and
+the rejected smooth profile off and reduces General MIDI percussion to 50% of
+its original gain. At the default zero volume, the generator is detached so
+music keeps its 1.3 KiB fixed SRAM cost but performs no continuous synthesis or
+silent buffer production. Optimised image `e9716825...` is installed and
+flash-verified; its short audible interaction check remains.
 
 ## Active goals
 
@@ -22,17 +30,17 @@ instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
 - Make movement and turning enjoyable enough for sustained combat and full-game progression.
 - Confirm extended-play stability through repeated E1M1-to-E1M2 runs.
 - Preserve the hardware-verified asynchronous sound-effect path while testing extended gameplay stability.
-- Keep effects-only audio as the device default while preserving music as an optional experiment.
-- Keep music disabled after the speaker-mastered oscillator candidate produced
-  distorted intermittent bursts; use fixed-memory OPL2 plus refill telemetry
-  if music is revisited.
+- Keep sound effects on and Music Volume at zero by default while compiling the
+  accepted lightweight score into normal firmware for menu-based opt-in.
 - Treat weapon selection and Escape/menu as solved essential actions; audit only genuinely missing controls before adding more vocabulary.
 - Treat F15's inherited F14.1 thumb geometry and visible guides as the navigation baseline.
 - Observe F15 through longer combat sessions before considering the BOOT safety/stability question fully mature.
 - Preserve F18 as the combined controls/display baseline; refine sensitivity,
   guides, or zone geometry only in isolated future comparisons.
-- Replace the remaining keyboard-only Quit Game confirmation with a
-  device-specific PWR confirm/cancel interaction.
+- Hardware-test the reversible 30px edge-zone candidate after the installed
+  28px LEFT/BACK version received a positive initial physical assessment.
+- Keep the hardware-accepted PWR quit/power-off path; only hold-to-cancel needs
+  an explicit regression check.
 - Measure memory and timing first, then refactor subsystems in small hardware-testable stages.
 
 ## Key decisions made
@@ -60,6 +68,12 @@ instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
 - Keep handheld save labels simple and deterministic: `SAVED GAME <slot> -
   <level>`, truncated within the original header. Do not add RTC setup or
   change the save format merely to timestamp a slot.
+- On embedded Y/N prompts only, translate menu-forward/Enter to Yes. This lets
+  short PWR confirm while the established PWR hold/Escape path cancels; leave
+  conventional desktop Doom unchanged.
+- Embedded Quit Game must power off through the AXP2101 rather than enter the
+  inherited permanent ENDOOM loop. Arm a watchdog restart before the PMIC
+  command so failure cannot strand the device on another inert screen.
 - Commit meaningful changes locally, never push without an explicit request, and normally squash unpublished commits into one milestone before pushing.
 - Keep README updates publication-oriented: major milestones or final pre-push cleanup only, not routine local commits.
 - Do not use continuous tilt for an essential action; repeated hardware tests made its neutral and activation too difficult to trust.
@@ -67,14 +81,31 @@ instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
 - Treat full-width 448x280 as an ambition; select the largest mode that remains smooth, responsive, stable, and memory-safe.
 - Keep performance instrumentation compile-time optional and bounded; measurements must not become a new gameplay dependency.
 - Prefer a coherent experience over feature count: effects stay, poor-quality music stays off, and later HUD/battery/settings additions must justify their cost.
-- Never apply global codec EQ or gain merely to rescue music: it would also
-  alter the accepted sound effects. Master the generated score independently.
-- Revisit music only through a fixed-memory OPL2 candidate with measured refill
-  cost and underflow telemetry before listening on the physical speaker.
+- Ship the accepted lightweight MUSX score at 50% percussion gain, with
+  mastering and smooth synthesis off. Compile it into the normal firmware but
+  initialise on-device Music Volume to zero; Options can enable it for the
+  current boot without a separate firmware image. Keep the generator detached
+  at zero so muted music has no continuous CPU cost.
+- Do not apply undocumented codec EQ coefficients. The lab may isolate global
+  codec DRC, but any winner must be retested with the accepted sound effects.
+- Keep the standalone music lab asset-free: it reads the user's existing WHX
+  and uses the real MUSX, mixer, DMA, and ES8311 path without gameplay/rendering.
 
 ## Current state
 
 - Game boots, renders, loads E1M1, and supports combat.
+- Existing save slots 1 and 2 load successfully on hardware; overwrite and an
+  explicit reboot-persistence check remain.
+- The first `TAP PWR TO QUIT` test confirmed the PWR-to-Yes mapping but exposed
+  the inherited bare-metal `I_Quit()` dead end: it entered a permanent
+  ENDOOM/text-screen loop and appeared frozen. A corrected `Press PWR to
+  quit.` candidate stops audio, requests documented AXP2101 software-off, and
+  uses a one-second watchdog restart fallback. Exact-wording UF2 `9ae33128...`
+  is now installed and flash-verified. Alexander confirmed the connected-USB
+  quit path works and no longer freezes. Battery-only shutdown also passed;
+  hold-to-cancel remains a small physical check. The earlier reported
+  non-shutdown cannot be attributed to this candidate because it preceded this
+  verified install.
 - Touch boundary chatter is filtered and no longer triggers blocking screen logs.
 - The first hybrid hardware test confirmed responsive/enjoyable horizontal touch turning and working double-tap Use/Open. It rejected proportional absolute tilt as requiring too large an angle, and rejected PWR hold because the PMIC long event opened the menu and a longer hold appeared to restart the game.
 - The second hybrid hardware test rejected the stateful gearbox: forward was inverted, transitions were delayed/unpredictable, and movement did not stop dependably because settled poses continually became new references.
@@ -114,6 +145,12 @@ instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
 - F14's physical test was the best control experience so far. LEFT/UP/RIGHT/DOWN, release-to-stop, and both forward-turn transition bands worked; diagonals could be refined but are not a blocker. The guides materially improved discoverability and remain enabled for extended testing. The only regression was that the control area suppressed Use double-taps.
 - F14.1 permits the same bounded stationary double-tap recogniser inside every F14 zone and resolves it to Use/Open. Immediate movement remains on both touch-downs, so the gesture can produce two tiny directional pulses but adds no general movement delay. It retains `__end__=0x20049310`, 224,496 zone bytes, and has UF2 SHA-256 `821fa198cd0115f8e520166939ed318ded16df5e752bbb4f9d43e3990ac7434d`; F13 and pointing-finger fallbacks remain byte-identical.
 - F14.1's in-zone Use/Open double tap is hardware-confirmed and works well.
+- The current edge-zone candidate keeps F18 behavior and the visible/tappable
+  geometry coupled. The installed 28px LEFT/BACK version felt nice overall.
+  The new candidate moves both to 30px, producing LEFT 30x268, UP 106x268,
+  RIGHT 204x268, and DOWN 340x30. Build `41d59b39...` retains the same static
+  memory, is installed and flash-verified, and has returned to application
+  USB; physical confirmation is pending.
 - The completed BOOT audit found the board switch is a designed 1 kΩ pull-down on flash CS, not a supply short, but the old Doom lockout missed a real flash reader: audio DMA's empty-queue `silence_buffer` is at XIP address `0x1005a1ec`. This is a plausible abnormal-audio mechanism, not proof of the prior odour's cause.
 - `boot_safety_probe` passed its one-press hardware gate: the audio/display-disabled black-screen image detected a brief press/release, entered ROM BOOTSEL, and produced no unexpected audio. The exact F14.1 image was restored and rebooted afterward.
 - Gate B is built behind default-off `DOOM_BOOT_NEXT_WEAPON`. It registers core 1 with the SDK flash-safe coordinator, samples only in a local level, ignores failed 2 ms safety handshakes, and queues one native forward weapon cycle after two stable press and release samples.
@@ -198,7 +235,9 @@ instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
 - Sound effects are enabled through a two-buffer DMA/IRQ I2S queue; all ADPCM channel mutations are serialized across cores.
 - Hardware confirms the game boots and its sound effects play correctly with the asynchronous backend.
 - The shareware WAD and generated WHD contain music, and the nine-voice fixed-memory MUSX synthesizer plays it successfully on hardware.
-- The lightweight chiptune rendering is not enjoyable through the small speaker, so `DOOM_ENABLE_MUSIC` defaults to `OFF`; the full backend remains available for later experiments.
+- The later lightweight baseline is coherent and sounds acceptable, but
+  `DOOM_ENABLE_MUSIC` remains `OFF` by default until the standalone comparison
+  identifies a genuinely pleasant profile and it passes an in-game SFX test.
 - The latest effects-only deployment was hardware-confirmed with working SFX, no music, and normal immediate gameplay behavior.
 - A source-unchanged rebuild using Pico SDK 2.3.0 and ARM GNU 15.3 matched the installed firmware byte-for-byte, flashed and verified through `picotool -f`, and rebooted without a physical BOOT press.
 - Removing duplicate `stdio_init_all()` calls hardware-restored autonomous application-to-BOOTSEL reset and return. CDC text remains unavailable, so performance reports use the reserved flash record instead of a live terminal.
@@ -214,13 +253,13 @@ instrumented fixed-memory OPL2 experiment rather than more oscillator tuning.
 - Does the final normal full-width build remain stable through repeated E1M1-to-E1M2 runs now that performance profiling is locked?
 - Does asynchronous SFX remain stable during a longer sustained-combat test?
 - Can the optional MUSX synthesizer's timbre be improved enough to suit the small speaker?
-- Does the revised pause-and-flash-safe save candidate load, overwrite, and
-  retain its now-successful first slot after a normal reboot?
+- Does the revised pause-and-flash-safe save candidate overwrite and retain its
+  saves after an explicit normal reboot? Existing slots 1 and 2 load correctly.
 - How does the accepted F16 control baseline feel during a longer combat run?
 - Is the 140px quadratic movement curve calm enough in the middle while keeping far-travel running reachable?
 - Does release-resolved PWR tap-fire remain responsive and reliable during combat?
 - Would an explicitly menu-only swipe mode feel better than F17 fixed-zone
   navigation without weakening input consistency elsewhere?
-- Does mapping short PWR/Enter to Yes only during Y/N dialogs, while retaining
-  PWR hold/Escape as cancel, give Quit Game the expected handheld behaviour?
+- Does the installed short-PWR/Enter confirmation candidate show the expected
+  text, quit on a tap, and cancel cleanly on PWR hold/Escape?
 - Can Doom and a Wolf3D/Spear port fit as independent application/data slots within the 16 MiB flash, selected by a small launcher?

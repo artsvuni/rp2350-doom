@@ -74,14 +74,31 @@
 - [x] Hardware-tune F14 geometry (best control result so far; thumb reach, cardinals, release-to-stop, overlay, and both forward diagonals passed; diagonals remain refinable).
 - [x] Allow bounded stationary Use/Open double taps inside all F14 control zones without delaying held movement.
 - [x] Hardware-test F14.1 in-zone Use (works well; accepted for continued play).
+- [x] Build a coupled visible/tappable geometry candidate with LEFT widened to
+  28px and BACK/DOWN raised to 28px.
+- [x] Perform an initial hardware assessment of the 28px LEFT/BACK candidate;
+  Alexander reported that it feels nice overall.
+- [x] Build the follow-up 30px LEFT/BACK geometry with coupled guides and hit
+  areas.
+- [ ] Hardware-test the 30px LEFT/BACK candidate for thumb reach, cardinal
+  selection, diagonals, release-to-stop, and guide alignment.
 - [x] Hardware-test F17 state-consistent input: fixed D-pad in menus, a fresh
   D-pad/PWR press advances the E1M1 score screen into E1M2, and DOWN again
   occupies only 20 visible game-image pixels at 448x336 (passed; issue fixed).
 - [ ] A/B test an explicitly menu-only swipe mode against F17 fixed-zone menu
   navigation; do not change gameplay or intermission routing.
-- [ ] Replace Doom's keyboard-specific Quit Game prompt with `TAP PWR TO
+- [x] Replace Doom's keyboard-specific Quit Game prompt with `TAP PWR TO
   QUIT`, and translate a short PWR/menu-confirm tap to `key_menu_confirm` only
   while a Y/N dialog is active. Preserve PWR hold/Escape as cancel.
+- [x] Hardware-test the first Quit Game candidate: text and short-PWR Yes
+  worked, but inherited `I_Quit()` entered a permanent ENDOOM loop and was
+  rejected.
+- [x] Recover with physical long PWR, install and checksum-verify the corrected
+  `Press PWR to quit.` candidate.
+- [x] Hardware-confirm short-PWR Quit Game with USB attached; it exits cleanly
+  instead of freezing.
+- [x] Test short-PWR shutdown on battery (passed).
+- [ ] Verify PWR hold still cancels the confirmation dialog.
 - [ ] Explore a polished permanent visual treatment for the helpful control guides after interaction mapping is locked.
 - [x] After touch-only controls are locked, decide whether motion still earns a role (no continuous tilt after F10; use explicit touch dodge gestures).
 - [x] Do not add a recenter action after continuous roll control was rejected.
@@ -100,6 +117,28 @@
 - [x] Hardware-test music playback and confirm the MUSX/WAD/backend path works.
 - [x] Research the speaker/codec, current synthesis failure, upstream OPL2,
   prerecorded-audio fallback, and performance/memory trade-offs.
+- [x] Build a standalone boot-to-E1M1 music lab that reuses the real WHX,
+  MUSX, mixer, DMA, and ES8311 path without embedding game assets.
+- [x] Build four labelled listening images: accepted baseline, cheap smooth
+  synth, 22.05kHz smooth synth, and smooth synth with codec DRC.
+- [x] Retire the standalone comparison path after both E1M1 and a direct 440Hz
+  output reference were silent outside Doom's complete runtime lifecycle.
+- [x] Compare one-variable music profiles directly in full Doom: reject the
+  smooth profile, retain the audible baseline, and accept 50% percussion.
+- [x] Hardware-compare the full-Doom smooth-synth candidate against the
+  accepted baseline (rejected: drums audible, tonal score almost inaudible).
+- [ ] If attempting another lightweight timbre profile, measure and match
+  perceived/RMS level per instrument family while leaving percussion unchanged.
+- [x] Hardware-check the accepted baseline with MIDI percussion reduced to
+  80% (improved, but drums remain too prominent).
+- [x] Hardware-check MIDI percussion at 60% of the original level (better;
+  drums remain slightly too prominent).
+- [x] Hardware-check MIDI percussion at 50% (accepted as the final balance;
+  tonal instruments, SFX, and gameplay remained unchanged).
+- [x] Include the accepted music backend in normal firmware while starting
+  Music Volume at zero; players can opt in through Doom's Options menu.
+- [x] Detach the music generator at volume zero so the muted default retains
+  only the fixed 1.3 KiB SRAM cost and performs no continuous synthesis.
 - [x] Build a reversible speaker-mastered fixed-memory music candidate with
   smoother voices, note envelopes, music-only filtering, peak control, lower
   default level, and SFX ducking.
@@ -107,14 +146,16 @@
   build was inaudible; corrected gain emitted distorted intermittent bursts).
 - [x] Restore exact effects-only F18 after manually entering BOOTSEL; flash
   verification passed and the board rebooted into application mode.
-- [ ] If music is revisited, port upstream OPL2 with fixed static state and no
-  `calloc`, instrumenting refill cost/underflow before physical listening.
+- [x] Close the OPL2 escalation because the lightweight baseline at 50%
+  percussion is acceptable; revisit only if a future experience goal justifies
+  the larger fixed-memory port.
 - [x] Add a default-off keyboard-free save mode that immediately generates
   slot/map/elapsed-time labels without requiring an RTC.
 - [ ] Hardware-test creating and overwriting an automatic save, then loading it
   after a normal reboot. Two attempts froze before any save-area byte changed;
   the corrected game-tick/core1 pause candidate successfully created one save.
-  Load, overwrite, and post-reboot persistence remain.
+  Alexander has now loaded existing slots 1 and 2 successfully. Overwrite and
+  explicit post-reboot persistence remain.
 - [x] Replace slot/map/time labels with the simpler Doom level title plus slot
   number (`HANGAR 1`, `HANGAR 2`, and so on), without RTC integration.
 - [x] Refine the final label order to `SAVED GAME <slot> - <level>`, with the

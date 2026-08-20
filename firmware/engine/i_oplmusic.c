@@ -77,6 +77,22 @@ const music_module_t music_opl_module =
 #define MUSX_TICKS_PER_BEAT 70u
 #define DEFAULT_US_PER_BEAT 500000u
 
+#ifndef DOOM_MUSIC_LAB
+#define DOOM_MUSIC_LAB 0
+#endif
+#ifndef DOOM_MUSIC_LAB_VARIANT
+#define DOOM_MUSIC_LAB_VARIANT 0
+#endif
+#ifndef DOOM_MUSIC_SMOOTH_SYNTH
+#define DOOM_MUSIC_SMOOTH_SYNTH 0
+#endif
+#ifndef DOOM_MUSIC_PERCUSSION_PERCENT
+#define DOOM_MUSIC_PERCUSSION_PERCENT 100
+#endif
+#define DOOM_MUSIC_LAB_SMOOTH \
+    (DOOM_MUSIC_SMOOTH_SYNTH \
+     || (DOOM_MUSIC_LAB && DOOM_MUSIC_LAB_VARIANT > 0))
+
 typedef struct
 {
     uint32_t phase;
@@ -87,6 +103,9 @@ typedef struct
     uint8_t velocity;
     uint8_t gain;
     uint8_t waveform;
+#if DOOM_MUSIC_LAB_SMOOTH
+    uint8_t target_gain;
+#endif
 #if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
     uint16_t envelope;
     int16_t noise_filter;
@@ -144,7 +163,13 @@ static uint32_t note_step(unsigned int note)
     };
 
     if (note > 127) note = 127;
-    return octave_minus_one[note % 12] << (note / 12);
+    // Scale at note-on rather than in the sample loop. Profile 2 runs the
+    // whole real audio path at 22.05kHz, where phase increments must double
+    // to preserve pitch.
+    uint64_t step = (uint64_t)octave_minus_one[note % 12]
+                  << (note / 12);
+    step = (step * 44100u) / PICO_SOUND_SAMPLE_FREQ;
+    return (uint32_t)step;
 }
 
 static uint8_t voice_gain(const music_voice_t *voice)
@@ -153,6 +178,13 @@ static uint8_t voice_gain(const music_voice_t *voice)
     gain *= music_channels[voice->channel].volume;
     gain *= music_volume;
     gain >>= 14;
+    // General MIDI channel 10 is percussion (zero-based index 9). Apply this
+    // here rather than only at note-on so later channel-volume events retain
+    // the intended drum balance.
+    if (voice->channel == 9)
+    {
+        gain = gain * DOOM_MUSIC_PERCUSSION_PERCENT / 100u;
+    }
     return gain > 127 ? 127 : (uint8_t)gain;
 }
 
@@ -162,7 +194,11 @@ static void refresh_channel_gains(unsigned int channel)
     {
         if (voices[i].active && voices[i].channel == channel)
         {
+#if DOOM_MUSIC_LAB_SMOOTH
+            voices[i].target_gain = voice_gain(&voices[i]);
+#else
             voices[i].gain = voice_gain(&voices[i]);
+#endif
         }
     }
 }
@@ -220,6 +256,8 @@ static void note_off(unsigned int channel, unsigned int note)
         {
 #if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
             voices[i].releasing = true;
+#elif DOOM_MUSIC_LAB_SMOOTH
+            voices[i].target_gain = 0;
 #else
             voices[i].active = false;
 #endif
@@ -247,15 +285,45 @@ static void note_on(unsigned int channel, unsigned int note,
     voice->note = (uint8_t)note;
     voice->channel = (uint8_t)channel;
     voice->velocity = (uint8_t)velocity;
-    voice->waveform = channel == 9 ? 4
-        : (music_channels[channel].program >> 4) & 3;
+    if (channel == 9)
+    {
+        voice->waveform = 4;
+    }
+#if DOOM_MUSIC_LAB_SMOOTH
+    else
+    {
+        // A compact instrument-family map gives the sixteen General MIDI
+        // program groups a less repetitive identity without storing samples
+        // or running an OPL emulator.
+        static const uint8_t program_family[16] =
+        {
+            0, 1, 1, 2, 0, 0, 2, 1,
+            3, 2, 0, 1, 3, 2, 0, 1,
+        };
+        voice->waveform = program_family[music_channels[channel].program >> 4];
+    }
+#else
+    else
+    {
+        voice->waveform = (music_channels[channel].program >> 4) & 3;
+    }
+#endif
 #if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
     voice->envelope = 0;
     voice->noise_filter = 0;
     voice->releasing = false;
 #endif
     voice->active = true;
+#if DOOM_MUSIC_LAB_SMOOTH
+    voice->gain = 0;
+    voice->target_gain = voice_gain(voice);
+    if (channel == 9)
+    {
+        voice->target_gain = (voice->target_gain * 3u) >> 2;
+    }
+#else
     voice->gain = voice_gain(voice);
+#endif
 }
 
 static void process_event(const midi_event_t *event)
@@ -312,6 +380,8 @@ static void process_event(const midi_event_t *event)
                     {
 #if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
                         voices[i].releasing = true;
+#elif DOOM_MUSIC_LAB_SMOOTH
+                        voices[i].target_gain = 0;
 #else
                         voices[i].active = false;
 #endif
@@ -354,7 +424,57 @@ static int32_t oscillator_sample(music_voice_t *voice)
     int32_t wave;
 
     voice->phase += voice->step;
-#if DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
+#if DOOM_MUSIC_LAB_SMOOTH
+    // Fold a short attack/release into the existing gain multiply. This
+    // removes the largest note-edge clicks for only a comparison and an
+    // increment per active voice, unlike the rejected heavy mastering path.
+    if (voice->gain < voice->target_gain)
+    {
+        voice->gain++;
+    }
+    else if (voice->gain > voice->target_gain)
+    {
+        voice->gain--;
+        if (voice->gain == 0 && voice->target_gain == 0)
+        {
+            voice->active = false;
+            return 0;
+        }
+    }
+
+    if (voice->waveform < 4)
+    {
+        uint32_t p = phase >> 16;
+        int32_t fundamental = p < 32768u
+            ? (int32_t)(p << 1) - 32768
+            : 98303 - (int32_t)(p << 1);
+        uint32_t p2 = (phase * 2u) >> 16;
+        int32_t second = p2 < 32768u
+            ? (int32_t)(p2 << 1) - 32768
+            : 98303 - (int32_t)(p2 << 1);
+        uint32_t p3 = (phase * 3u) >> 16;
+        int32_t third = p3 < 32768u
+            ? (int32_t)(p3 << 1) - 32768
+            : 98303 - (int32_t)(p3 << 1);
+
+        switch (voice->waveform)
+        {
+            case 0: wave = fundamental; break;
+            case 1: wave = fundamental + (second >> 2); break;
+            case 2: wave = fundamental - (third >> 3); break;
+            default: wave = (fundamental >> 1) + (second >> 1); break;
+        }
+    }
+    else
+    {
+        noise_state ^= noise_state << 13;
+        noise_state ^= noise_state >> 17;
+        noise_state ^= noise_state << 5;
+        wave = (int16_t)(noise_state >> 16);
+    }
+
+    return (wave * voice->gain) >> 11;
+#elif DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
     // Fast attack removes the hard phase-reset click without making Doom's
     // score feel sluggish. A short release removes note-off clicks and gives
     // the tiny speaker a little space between dense events.
@@ -532,6 +652,18 @@ static void music_generator(audio_buffer_t *buffer)
     mutex_exit(&music_mutex);
 }
 
+// music_mutex must be held. A null generator lets the shared audio backend
+// sleep between sound effects instead of continuously producing silent music
+// buffers. Keeping the iterator intact makes a later volume increase resume
+// the current track without allocating or reloading anything.
+static void update_music_generator_locked(void)
+{
+    I_PicoSoundSetMusicGenerator(
+        music_playing && !music_paused && music_volume > 0
+            ? music_generator
+            : NULL);
+}
+
 static boolean I_LiteMusic_Init(void)
 {
     mutex_init(&music_mutex);
@@ -550,6 +682,7 @@ static void I_LiteMusic_Shutdown(void)
     song_iter = NULL;
     song_file = NULL;
     silence_voices();
+    update_music_generator_locked();
     mutex_exit(&music_mutex);
 }
 
@@ -561,8 +694,16 @@ static void I_LiteMusic_SetVolume(int volume)
     music_volume = (uint8_t)volume;
     for (unsigned int i = 0; i < MUSIC_VOICES; ++i)
     {
-        if (voices[i].active) voices[i].gain = voice_gain(&voices[i]);
+        if (voices[i].active)
+        {
+#if DOOM_MUSIC_LAB_SMOOTH
+            voices[i].target_gain = voice_gain(&voices[i]);
+#else
+            voices[i].gain = voice_gain(&voices[i]);
+#endif
+        }
     }
+    update_music_generator_locked();
     mutex_exit(&music_mutex);
 }
 
@@ -570,6 +711,7 @@ static void I_LiteMusic_Pause(void)
 {
     mutex_enter_blocking(&music_mutex);
     music_paused = true;
+    update_music_generator_locked();
     mutex_exit(&music_mutex);
 }
 
@@ -577,6 +719,7 @@ static void I_LiteMusic_Resume(void)
 {
     mutex_enter_blocking(&music_mutex);
     music_paused = false;
+    update_music_generator_locked();
     mutex_exit(&music_mutex);
 }
 
@@ -602,6 +745,7 @@ static void I_LiteMusic_UnRegisterSong(void *handle)
         silence_voices();
     }
     MIDI_FreeFile(handle);
+    update_music_generator_locked();
     mutex_exit(&music_mutex);
 }
 
@@ -619,7 +763,7 @@ static void I_LiteMusic_PlaySong(void *handle, boolean looping)
     samples_to_event = 0;
     reset_channels();
     silence_voices();
-    I_PicoSoundSetMusicGenerator(music_generator);
+    update_music_generator_locked();
     mutex_exit(&music_mutex);
 }
 
@@ -635,6 +779,7 @@ static void I_LiteMusic_StopSong(void)
     if (song_iter != NULL) MIDI_FreeIterator(song_iter);
     song_iter = NULL;
     silence_voices();
+    update_music_generator_locked();
     mutex_exit(&music_mutex);
 }
 

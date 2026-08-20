@@ -113,7 +113,7 @@ effects-only. If the timbre remains obviously toy-like, stop tuning arbitrary
 numbers and move to the fixed-memory OPL2 gate. If it sounds good but gameplay
 feels slower, use the existing bounded flight recorder to quantify the cost.
 
-## Hardware result
+## Hardware result: rejected heavy mastering
 
 Rejected. The first mastered build was effectively inaudible. Restoring the
 old 8/15 gain and relaxing the high-pass did not reveal a coherent score; in
@@ -131,5 +131,79 @@ signal is the immediate cause, this design fails the audible acceptance gate.
 
 Do not continue gain/filter tuning. Restore exact effects-only F18 and treat
 the lightweight mastered backend as rejected evidence. The next music attempt,
-if pursued, is a separately gated fixed-memory OPL2 port with audio refill cost
-instrumented before physical listening.
+if pursued, must start from the later hardware-confirmed audible lightweight
+baseline rather than from this expensive filter chain.
+
+## Retired standalone comparison lab
+
+The later unmastered 44.1kHz backend was rebuilt with the complete accepted
+game configuration and hardware-confirmed to play coherent E1M1 music at an
+acceptable starting quality. Music still remains off by default, but this is
+now the rollback for further audio work.
+
+`DOOM_MUSIC_LAB=ON` turns the firmware into a small deterministic player. It
+maps the user's already-flashed WHX, finds `D_E1M1`, starts the real Doom music
+module, and continuously services the normal mixer and ES8311 DMA path. The
+game loop and renderer are never started. Link-time removal of unused code
+leaves the standalone image at about 67.9KB text and 27.6KB BSS, making it a
+small engineering probe without committing any Doom assets.
+
+Physical testing rejected it as a comparison harness. Profile 0 reached its
+listening screen but emitted neither E1M1 nor a direct 440Hz reference tone
+through the real output queue. Moving the lab later in Doom's lifecycle would
+remove most of its speed and isolation advantage. Further listening therefore
+runs directly in Doom, starting from the already-audible lightweight baseline
+and changing only one synthesis or codec variable per build.
+
+Four labelled profiles are available:
+
+| Profile | Question |
+| --- | --- |
+| 0 BASELINE | Does the lab reproduce the accepted audible 44.1kHz result? |
+| 1 SMOOTH | Are continuous low-cost harmonic shapes and short gain ramps more pleasant than raw square/saw/pulse voices? |
+| 2 22KHZ | Does halving synthesis/refill work preserve enough quality for gameplay? |
+| 3 CODEC | Does moderate ES8311 DAC dynamic-range control improve the tiny speaker after profile 1? |
+
+Profile 3 keeps the codec's coefficient-based EQ bypassed because no validated
+board-specific coefficients are available. It is deliberately a global-codec
+experiment; if useful, its effect on the already-good SFX must be tested in
+Doom before adoption.
+
+Compare future profiles in the same E1M1 route for the same 20–30 second
+section. Judge melody clarity, harshness/fatigue, percussion noise, clicks,
+timing stability, obvious gaps, SFX balance, and gameplay smoothness. Authentic
+fixed-memory OPL2 remains the next larger engineering route if no lightweight
+in-game profile is enjoyable.
+
+### Full-Doom smooth-synth result
+
+The first controlled in-game candidate changed only oscillator shapes,
+instrument-family mapping, and short note-edge ramps. Hardware listening
+rejected it: the drum track remained audible while the rest of the score became
+almost impossible to hear. The most likely cause is reduced perceived level
+from mapping many tonal instruments away from the baseline's square, saw, and
+narrow-pulse waveforms; percussion retained full-range noise. Do not correct
+this with global gain because that would make the already-prominent drums
+louder. Preserve the accepted baseline and require per-family loudness matching
+before any further timbre comparison.
+
+## Final accepted result
+
+Close the experiment on the original lightweight fixed-memory synth rather
+than the rejected smooth or mastered paths. Hardware listening accepted its
+coherent score after reducing only General MIDI percussion channel 10 to 50%
+of the original gain. Tonal voices, sound effects, 44.1kHz output, 512-sample
+buffers, codec configuration, rendering, controls, and saves remain unchanged.
+
+The normal firmware includes this backend but starts Music Volume at zero, so
+the default pocket experience remains effects-only. The player can opt in from
+Doom's existing Options menu. The implementation occupies 1,320 bytes more
+fixed SRAM than the compiled-out effects-only rollback. When volume is zero or
+music is paused, the generator is detached: MIDI decoding, nine-voice
+synthesis, and continuous silent buffer production stop. Raising the volume
+reattaches the generator and resumes the retained song state.
+
+Installed and flash-verified final UF2 SHA-256:
+`e97168255564a6e5b13b2c5eaed03ecb3abb3baf360601cb232dcdfc1543ebb6`.
+Its `__end__=0x2004a150` leaves 218,800 bytes of calculated Doom-zone headroom.
+Treat music engineering as complete unless later play reveals a regression.

@@ -7,13 +7,21 @@ project(doom_firmware C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-# The fixed-memory MUSX synthesizer works on hardware, but its deliberately
-# simple chiptune timbre is not a good default for this board's tiny speaker.
-# Keep the implementation available for experiments without charging the
-# normal SFX-only build its code, static state, or continuous mixer cost.
-option(DOOM_ENABLE_MUSIC "Enable experimental MUSX music synthesis" OFF)
+# The fixed-memory MUSX synthesizer is part of the handheld firmware so music
+# can be enabled from Doom's normal Options menu. The runtime volume starts at
+# zero on-device; sound effects remain audible by default.
+option(DOOM_ENABLE_MUSIC "Enable fixed-memory MUSX music synthesis" ON)
 option(DOOM_MUSIC_SPEAKER_MASTERING
-    "Use smoother synthesis and music-only small-speaker mastering" ON)
+    "Use smoother synthesis and music-only small-speaker mastering" OFF)
+option(DOOM_MUSIC_SMOOTH_SYNTH
+    "Use low-cost smooth voices and note-edge ramps without mastering" OFF)
+set(DOOM_MUSIC_PERCUSSION_PERCENT "50" CACHE STRING
+    "MIDI percussion-channel gain percentage (0 to 100)")
+option(DOOM_MUSIC_LAB
+    "Boot directly into the standalone E1M1 music listening lab" OFF)
+set(DOOM_MUSIC_LAB_VARIANT "0" CACHE STRING
+    "Music lab profile: 0 baseline, 1 smooth synth, 2 22.05kHz, 3 codec DRC")
+set_property(CACHE DOOM_MUSIC_LAB_VARIANT PROPERTY STRINGS 0 1 2 3)
 option(DOOM_HANDHELD_AUTO_SAVE_NAMES
     "Save immediately with generated slot/map/time names instead of typing" OFF)
 option(DOOM_FLASH_SAFE_SAVES
@@ -48,6 +56,33 @@ set_property(CACHE DOOM_DISPLAY_HEIGHT_OVERRIDE PROPERTY STRINGS
 set(DOOM_PANEL_CHUNK_ROWS "40" CACHE STRING
     "Transpose tile height: AUTO, 8, 10, 20, or 40")
 set_property(CACHE DOOM_PANEL_CHUNK_ROWS PROPERTY STRINGS AUTO 8 10 20 40)
+
+if(NOT DOOM_MUSIC_LAB_VARIANT MATCHES "^[0-3]$")
+    message(FATAL_ERROR "DOOM_MUSIC_LAB_VARIANT must be 0, 1, 2, or 3")
+endif()
+
+if(NOT DOOM_MUSIC_PERCUSSION_PERCENT MATCHES "^[0-9]+$"
+   OR DOOM_MUSIC_PERCUSSION_PERCENT GREATER 100)
+    message(FATAL_ERROR "DOOM_MUSIC_PERCUSSION_PERCENT must be 0 to 100")
+endif()
+
+if(DOOM_MUSIC_LAB AND NOT DOOM_ENABLE_MUSIC)
+    message(FATAL_ERROR "DOOM_MUSIC_LAB requires DOOM_ENABLE_MUSIC=ON")
+endif()
+
+if(DOOM_MUSIC_LAB AND DOOM_MUSIC_SPEAKER_MASTERING)
+    message(FATAL_ERROR
+        "Music-lab profiles use the accepted lightweight path; configure "
+        "DOOM_MUSIC_SPEAKER_MASTERING=OFF")
+endif()
+
+if(DOOM_MUSIC_LAB AND DOOM_MUSIC_LAB_VARIANT STREQUAL "2")
+    set(DOOM_AUDIO_SAMPLE_RATE 22050)
+    set(DOOM_AUDIO_BUFFER_SAMPLES 256)
+else()
+    set(DOOM_AUDIO_SAMPLE_RATE 44100)
+    set(DOOM_AUDIO_BUFFER_SAMPLES 512)
+endif()
 
 if(DOOM_DISPLAY_WIDTH STREQUAL "320")
     set(DOOM_DISPLAY_HEIGHT 200)
@@ -168,7 +203,11 @@ message(STATUS
     "profiling=${DOOM_ENABLE_PROFILING}; dpad=${DOOM_TOUCH_DPAD}; "
     "auto_save_names=${DOOM_HANDHELD_AUTO_SAVE_NAMES}; "
     "flash_safe_saves=${DOOM_FLASH_SAFE_SAVES}; "
+    "music_percussion=${DOOM_MUSIC_PERCUSSION_PERCENT}%; "
+    "music_smooth=${DOOM_MUSIC_SMOOTH_SYNTH}; "
     "music_mastering=${DOOM_MUSIC_SPEAKER_MASTERING}; "
+    "music_lab=${DOOM_MUSIC_LAB}; lab_variant=${DOOM_MUSIC_LAB_VARIANT}; "
+    "audio=${DOOM_AUDIO_SAMPLE_RATE}Hz/${DOOM_AUDIO_BUFFER_SAMPLES}; "
     "thumb_zones=${DOOM_TOUCH_DPAD_THUMB_ZONES}; "
     "dpad_overlay=${DOOM_TOUCH_DPAD_OVERLAY}; "
     "boot_next_weapon=${DOOM_BOOT_NEXT_WEAPON}; "
@@ -272,6 +311,12 @@ add_subdirectory(lib/audio_pio)
 add_subdirectory(lib/es8311)
 add_subdirectory(lib/bootlog)
 
+target_compile_definitions(audio_pio PRIVATE
+    DOOM_AUDIO_BUFFER_SAMPLES=${DOOM_AUDIO_BUFFER_SAMPLES})
+target_compile_definitions(es8311 PRIVATE
+    DOOM_MUSIC_LAB=$<BOOL:${DOOM_MUSIC_LAB}>
+    DOOM_MUSIC_LAB_VARIANT=${DOOM_MUSIC_LAB_VARIANT})
+
 if(DOOM_BOOT_NEXT_WEAPON OR DOOM_FLASH_SAFE_SAVES)
     # No DMA-visible source may live in XIP while BOOT sampling or a save write
     # temporarily makes flash unavailable. Gate B additionally disables audio
@@ -362,7 +407,13 @@ target_compile_definitions(doom PRIVATE
     DOOM_ROLL_STRAFE=$<BOOL:${DOOM_ROLL_STRAFE}>
     DOOM_HANDHELD_AUTO_SAVE_NAMES=$<BOOL:${DOOM_HANDHELD_AUTO_SAVE_NAMES}>
     DOOM_FLASH_SAFE_SAVES=$<BOOL:${DOOM_FLASH_SAFE_SAVES}>
+    DOOM_MUSIC_PERCUSSION_PERCENT=${DOOM_MUSIC_PERCUSSION_PERCENT}
+    DOOM_MUSIC_SMOOTH_SYNTH=$<BOOL:${DOOM_MUSIC_SMOOTH_SYNTH}>
     DOOM_MUSIC_SPEAKER_MASTERING=$<BOOL:${DOOM_MUSIC_SPEAKER_MASTERING}>
+    DOOM_MUSIC_LAB=$<BOOL:${DOOM_MUSIC_LAB}>
+    DOOM_MUSIC_LAB_VARIANT=${DOOM_MUSIC_LAB_VARIANT}
+    DOOM_AUDIO_SAMPLE_RATE=${DOOM_AUDIO_SAMPLE_RATE}
+    DOOM_AUDIO_BUFFER_SAMPLES=${DOOM_AUDIO_BUFFER_SAMPLES}
     PICODOOM_RENDER_NEWHOPE=1
     MERGE_DISTSCALE0_INTO_VIEWCOSSINANGLE=1
 

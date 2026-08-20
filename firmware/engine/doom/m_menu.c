@@ -2105,6 +2105,15 @@ boolean M_Responder (event_t* ev)
     {
 	if (messageNeedsInput)
         {
+#if DOOM_TINY
+            // The handheld PWR tap emits the normal menu-forward/Enter key.
+            // Treat it as Yes only while a Y/N prompt owns input; PWR hold
+            // remains Escape and therefore closes the prompt without confirming.
+            if (key == key_menu_forward)
+            {
+                key = key_menu_confirm;
+            }
+#endif
             if (key != ' ' && key != KEY_ESCAPE
              && key != key_menu_confirm && key != key_menu_abort)
             {

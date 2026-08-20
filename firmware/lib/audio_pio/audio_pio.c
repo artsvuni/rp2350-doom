@@ -13,7 +13,10 @@
 #include "audio_pio.pio.h"
 
 #define AUDIO_DMA_BUFFER_COUNT 2
-#define AUDIO_DMA_SAMPLES_PER_BUFFER 512
+#ifndef DOOM_AUDIO_BUFFER_SAMPLES
+#define DOOM_AUDIO_BUFFER_SAMPLES 512
+#endif
+#define AUDIO_DMA_SAMPLES_PER_BUFFER DOOM_AUDIO_BUFFER_SAMPLES
 
 enum audio_buffer_state {
     AUDIO_BUFFER_FREE,

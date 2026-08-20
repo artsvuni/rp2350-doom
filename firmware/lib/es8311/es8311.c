@@ -364,6 +364,15 @@ void es8311_init(pico_audio_t pico_audio)
     es8311_write_reg(ES8311_SYSTEM_REG13, 0x10); // Enable output to HP drive - NOT default
     es8311_write_reg(ES8311_ADC_REG1C, 0x6A); // ADC Equalizer bypass, cancel DC offset in digital domain
     es8311_write_reg(ES8311_DAC_REG37, 0x08); // Bypass DAC equalizer - NOT default
+#if DOOM_MUSIC_LAB && DOOM_MUSIC_LAB_VARIANT == 3
+    // Listening-lab profile 3: enable the codec's documented DAC dynamic
+    // range controller with a moderate window and target span. Keep bit 3 in
+    // REG37 set so the undocumented five-band coefficient RAM stays bypassed.
+    // This is intentionally isolated from normal Doom because it also shapes
+    // sound effects mixed through the same DAC.
+    es8311_write_reg(ES8311_DAC_REG34, 0x84);
+    es8311_write_reg(ES8311_DAC_REG35, 0xC5);
+#endif
 }
 
 int es8311_voice_volume_set(int volume)

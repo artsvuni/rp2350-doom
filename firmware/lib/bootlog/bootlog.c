@@ -103,6 +103,26 @@ void bootlog_disable(void)
     display_enabled = false;
 }
 
+void bootlog_clear_panel(void)
+{
+    mutex_enter_blocking(&bootlog_mutex);
+
+    // 448 is exactly 32 * 14, so the existing 10KiB strip is enough to clear
+    // the whole portrait-addressed panel without allocating a framebuffer or
+    // issuing the unreliable SetWindows-per-row sequence.
+    memset(fb, 0, sizeof(fb));
+    AMOLED_1IN8_DisplayStreamBegin(0, 0, AMOLED_1IN8_WIDTH,
+                                   AMOLED_1IN8_HEIGHT);
+    for (int strip = 0; strip < AMOLED_1IN8_HEIGHT / BOOTLOG_HEIGHT; ++strip)
+    {
+        AMOLED_1IN8_DisplayStreamWrite(fb, sizeof(fb));
+    }
+    AMOLED_1IN8_DisplayStreamEnd();
+
+    history_count = 0;
+    mutex_exit(&bootlog_mutex);
+}
+
 void bootlog_print(const char *msg)
 {
     if (!display_enabled) return;

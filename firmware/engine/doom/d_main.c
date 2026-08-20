@@ -66,6 +66,9 @@
 #include "i_system.h"
 #include "i_timer.h"
 #include "i_video.h"
+#if DOOM_MUSIC_LAB
+#include "pico/music_lab.h"
+#endif
 
 #include "g_game.h"
 
@@ -611,6 +614,13 @@ void D_DoomLoop (void)
     I_InitGraphics();
 #if PICO_ON_DEVICE
     bootlog_print("17: I_InitGraphics OK");
+#endif
+#if DOOM_MUSIC_LAB
+    // Keep the listening UI minimal, but enter it only after Doom has brought
+    // up its proven WAD, zone, sound, display and core1 runtime. The earlier
+    // pre-Doom shortcut was silent even for a direct reference tone, proving
+    // that it skipped a required part of the real hardware lifecycle.
+    MusicLab_Run();
 #endif
 #if USB_SUPPORT
     printf("Sleeping 2s for USB devices\n"); // TinyUSB still grinds to a halt during connect/disconnect

@@ -2,6 +2,160 @@
 
 ## 2026-08-20
 
+### 16:48 — Close and publish the handheld milestone
+
+- Closed the music investigation on the accepted lightweight synth at 50%
+  percussion, muted and CPU-dormant by default with menu opt-in.
+- Updated the current briefing, README-level guidance, experiment conclusion,
+  TODOs, and next-session handoff; battery-only PWR shutdown is recorded as
+  hardware-passed.
+- Reviewed all 22 unpublished commits spanning PWR quit, 30px controls, and
+  music work for one coherent milestone push.
+
+### 16:42 — Install dormant-muted music firmware
+
+- Installed committed image `e9716825...` through autonomous USB reset.
+- Full flash verification passed and the board rebooted into application mode;
+  WHX and save sectors were outside the firmware write.
+- Audible confirmation remains: silent score at boot, normal SFX, then working
+  music after raising Music Volume in Options.
+
+### 16:37 — Suspend muted music synthesis
+
+- Confirmed that the first zero-volume build still parsed the song, evaluated
+  its voices, and kept audio buffers flowing despite producing silence.
+- Made generator attachment depend on a playing, unpaused song with non-zero
+  volume; raising Music Volume resumes the retained track state immediately.
+- Preserved the fixed 1.3 KiB SRAM cost and removed continuous muted-music CPU
+  work without changing SFX, music timbre, percussion balance, or controls.
+- Built candidate `e9716825...` with unchanged 218,800-byte Doom-zone
+  headroom; installation and the short audible interaction check remain.
+
+### 15:57 — Ship optional music muted by default
+
+- Accepted the lightweight music balance with General MIDI percussion at 50%
+  of its original gain and closed the listening experiment.
+- Included the fixed-memory music engine in the normal handheld configuration,
+  while starting on-device Music Volume at zero and retaining normal SFX.
+- Players can opt into music through Doom's existing Options menu; a fresh boot
+  returns to the preferred effects-only default.
+- Updated the audio decision, README, project context, TODO, and handoff.
+- Built and installed the full-panel image with UF2 SHA-256 `23509004...`;
+  flash verification passed and the board rebooted to application mode.
+
+### 14:31 — Initialise the complete music-lab display
+
+- The first physically installed baseline showed a distorted screen because
+  bootlog deliberately initialises only its 14px diagnostic strip and the lab
+  never starts Doom's renderer to replace the remaining panel RAM.
+- Added a lab-only full-panel clear using one display stream and the existing
+  10KiB bootlog strip repeated exactly 32 times; it adds no framebuffer and
+  avoids the previously unreliable per-row SetWindows sequence.
+- Audio assessment remains pending until the corrected visual state is
+  installed and confirmed.
+- Commit: included in this music-lab panel-init fix.
+
+### 14:19 — Build a standalone Doom music listening lab
+
+- Added a compile-selectable firmware mode that skips gameplay and rendering,
+  maps the existing user-flashed WHX, and loops E1M1 through Doom's real MUSX,
+  synth, mixer, DMA, and ES8311 path.
+- Added clear on-screen profile labels and four reversible builds: exact
+  44.1kHz baseline, cheap smooth synth, smooth synth at 22.05kHz/256 frames,
+  and smooth 44.1kHz synth with experimental codec DRC and EQ still bypassed.
+- Kept normal Doom and its effects-only default unchanged. No game or music
+  asset was added to the repository.
+- All four Release UF2s build. The standalone codec profile uses 67,900 bytes
+  of text and 27,588 bytes of BSS. SHA-256 values are documented in the music
+  experiment after physical acceptance.
+- Autonomous baseline installation was attempted, but macOS currently reports
+  no attached RP-series USB device; no flash write occurred and the accepted
+  Doom firmware remains untouched.
+- Commit: included in this standalone music-lab commit.
+
+### 13:29 — Refine the edge controls to 30px
+
+- Recorded Alexander's positive physical impression of the installed 28px
+  LEFT/BACK geometry: it feels nice overall.
+- Increased LEFT from 28px to 30px wide and BACK/DOWN from 28px to 30px high,
+  retaining the shared visible/tappable constants and unchanged footprint.
+- The resulting rectangles are LEFT 30x268, UP 106x268, RIGHT 204x268, and
+  DOWN 340x30.
+- Built UF2 `41d59b392549fd7e7c86192ae4304162a94e7796cac341bfe24ed915dc1ba482`;
+  `__end__` and 220,120-byte zone headroom remain unchanged. Installation and
+  physical confirmation remain.
+- Installed and flash-verified the 30/30 candidate through autonomous USB
+  reset; the board returned to application USB.
+
+### 13:11 — Enlarge the edge thumb controls
+
+- Kept the visible guide rectangles and tappable gameplay boundaries driven by
+  the same constants; there is no separate hidden control layout.
+- Increased LEFT from 24px to 28px wide and BACK/DOWN from 20px to 28px high.
+  The resulting rectangles are LEFT 28x270, UP 108x270, RIGHT 204x270, and
+  DOWN 340x28 within the unchanged 340x298 control footprint.
+- Built full-panel effects-only UF2
+  `26a6f2b9daa27a26e7eda5cf38f6214b5b1d218cb6e620408e36fb2a3c4ac846`;
+  `__end__` and 220,120-byte zone headroom are unchanged. Hardware testing
+  remains.
+- Installed and flash-verified the candidate through autonomous USB reset; the
+  board returned to application USB.
+
+### 12:06 — Accept PWR quit with USB attached
+
+- Alexander confirmed the installed exact-wording candidate works: the new
+  quit interaction exits cleanly instead of entering the inherited frozen
+  ENDOOM loop.
+- Accept the connected-USB path on hardware. Battery-only shutdown and
+  hold-to-cancel remain small follow-up checks.
+
+### 11:21 — Install the exact-wording quit candidate
+
+- Used approved direct USB access after sandboxed picotool could see the Pico
+  device but could not claim its reset interface.
+- Installed and flash-verified UF2 `9ae3312825067e65618a9da2a7553afbcd692870052f9f717b76d723faafc3cf`;
+  picotool reported the expected Doom RP2350 image and the board returned to
+  application USB.
+- Physical gates remain: confirm `Press PWR to quit.`, test shutdown once over
+  USB and once on battery, and verify PWR hold still cancels.
+
+### 11:29 — Use the requested Quit Game wording
+
+- Changed the embedded confirmation suffix to the exact requested sentence:
+  `Press PWR to quit.`
+- Corrected the test attribution: the PMIC-off candidate had been built but
+  was not installed from this Mac because the older exit loop had already
+  removed USB reset access. The reported non-shutdown therefore cannot yet be
+  treated as a physical result for candidate `4e1d3595...`.
+- Keep the candidate unaccepted until its installed checksum is verified and
+  shutdown is checked separately with USB attached and on battery.
+- Built exact-wording UF2 `9ae3312825067e65618a9da2a7553afbcd692870052f9f717b76d723faafc3cf`
+  with unchanged 220,120-byte zone headroom.
+
+### 11:11 — Replace bare-metal Quit freeze with PMIC power-off
+
+- Root-caused the post-confirmation freeze to inherited `I_Quit()` entering a
+  permanent ENDOOM/text-screen loop on hardware with no operating system.
+- Added the AXP2101's documented REG 0x10 bit-0 software-off command without
+  changing any rail voltage or physical button configuration.
+- Quit now stops audio, arms a one-second restart fallback, and requests PMIC
+  shutdown; the prompt accurately says `TAP PWR TO POWER OFF`.
+- Built candidate UF2 `4e1d3595...` with unchanged 220,120-byte zone
+  headroom. Installation awaits physical long-PWR recovery from the old loop.
+
+### 10:34 — Install handheld Quit Game confirmation
+
+- Changed the embedded quit suffix to `TAP PWR TO QUIT` while retaining the
+  original DOS wording for conventional builds.
+- Scoped menu-forward/Enter to Yes only while an embedded Y/N prompt owns
+  input; PWR hold remains Escape/cancel and gameplay input is unchanged.
+- Built with pinned ARM GNU 15.3, producing UF2
+  `7b3448ee427ac05a4d6cbe86d50cc4538a7a9a6a1ca37e2235cd02b3a6f0ff7b`
+  with 220,120 bytes calculated zone headroom.
+- Installed and programmer-verified the candidate through autonomous reset;
+  the board returned to application USB. Physical tap/hold testing remains.
+- Recorded Alexander's confirmation that existing save slots 1 and 2 load.
+
 ### 10:23 — Prepare the cross-machine Doom handoff
 
 - Corrected the README to describe the accepted clock-free save label
@@ -904,3 +1058,55 @@
 - Cleared the previously uninitialized letterbox bands and expanded the short-pointer zone by 64KB.
 - Firmware builds and boots; extended gameplay lasts substantially longer, with memory stability still under test.
 - Commit: included in this milestone commit.
+### 00:00 — Separate music synthesis from physical audio output
+
+- Confirmed the standalone lab reaches its profile screen without audible music; the corrected full-panel clear now produces a clean black panel with only the intended 14px status strip.
+- Added a quiet 400ms 440Hz reference tone through the real mixer, DMA, PIO I2S, ES8311, and speaker immediately before E1M1 autoplay.
+- Added explicit audio-initialized and music-playing failure checkpoints.
+- Made a PWR short press replay the tone-plus-E1M1 sequence and added a 1ms service yield to the lab loop.
+- Commit: included in this standalone-audio diagnostic commit.
+### 00:00 — Run the listening lab behind Doom's proven hardware lifecycle
+
+- Hardware found both the direct 440Hz output tone and E1M1 silent in the pre-Doom standalone path, isolating the failure below MUSX synthesis.
+- Removed the premature lab branch from the executable entry point.
+- Entered the same minimal listening loop immediately after normal Doom completes WHX, zone, sound, display, and render-core initialization.
+- Preserved automatic tone-then-E1M1 playback and PWR replay while eliminating duplicate WAD, zone, and codec setup.
+- Commit: included in this full-lifecycle listening-lab commit.
+### 00:00 — Retire the standalone player and return testing to Doom
+
+- Assessed the standalone harness as diminishing-return work after it produced neither its direct reference tone nor E1M1 on hardware.
+- Kept the failed harness as useful evidence of lifecycle coupling, but removed it from the active listening protocol.
+- Rebuilt the current full-panel, current-controls Doom configuration with the accepted lightweight music baseline and speaker mastering disabled.
+- Future comparisons will change one audio variable at a time inside the actual game, where render load, SFX mixing, and audio servicing are representative.
+- Commit: included in this direct-in-game music-testing decision.
+### 00:00 — Build the first controlled in-game music comparison
+
+- Added an independent `DOOM_MUSIC_SMOOTH_SYNTH` switch so the low-cost profile can run inside normal Doom rather than only in the retired standalone lab.
+- Limited candidate A/B differences to continuous oscillator shapes, compact instrument-family mapping, and one-step note attack/release ramps.
+- Kept 44.1kHz audio, 512-frame buffers, codec registers, music volume, display, controls, saves, and sound-effect handling identical to the accepted baseline.
+- Commit: included in this in-game smooth-synth candidate.
+### 00:00 — Reject smooth synth and restore the audible baseline
+
+- Hardware listening found the controlled smooth-synth candidate made the drum track audible but reduced the rest of the score to almost inaudible levels.
+- Rejected global gain compensation because it would exaggerate the already-prominent percussion and confound the comparison.
+- Recorded per-instrument-family loudness matching as a prerequisite for any later lightweight timbre candidate.
+- Rebuilt and selected the current full-Doom audible baseline for immediate restoration.
+- Commit: included in this smooth-synth hardware verdict.
+### 00:00 — Add a controlled 20% percussion reduction
+
+- Preserved the accepted lightweight synthesiser and reduced only General MIDI percussion-channel gain to 80% in the next candidate.
+- Applied scaling in the shared voice-gain calculation so later MIDI channel-volume events cannot undo the balance.
+- Left tonal instruments, global music volume, sound effects, codec, sample rate, buffering, display, controls, and saves unchanged.
+- Commit: included in this percussion-balance candidate.
+### 00:00 — Reduce percussion from 80% to 60%
+
+- Hardware listening found the first 20% drum reduction helpful but still too prominent.
+- Prepared a second controlled candidate at 60% of the original General MIDI percussion-channel level.
+- Kept tonal synthesis, music volume, sound effects, codec, rendering, controls, and saves unchanged.
+- Commit: included in this 60% percussion candidate.
+### 00:00 — Refine percussion balance from 60% to 50%
+
+- Hardware listening judged the 60% candidate better while leaving percussion slightly too prominent.
+- Prepared a final small adjustment to 50% of the original General MIDI percussion-channel level.
+- Preserved every tonal, sound-effect, codec, display, control, and save setting for a clean comparison.
+- Commit: included in this 50% percussion candidate.

@@ -15,13 +15,15 @@ board's 368×448 SH8601 AMOLED, FT3168 touch controller, AXP2101 power
 management IC, and ES8311 audio codec. The result boots, renders, loads E1M1,
 and is playable on the physical device.
 
-> **Current status (18 August 2026):** the F18 effects-only build is verified on
+> **Current status (20 August 2026):** the F18 effects-only build is verified on
 > hardware with working touch controls, menu navigation, combat, and sound
 > effects. The installed full-panel 448×368 presentation sustains **34.3 FPS**
 > over a measured one-minute combat run with zero display-DMA timeouts and no
 > additional static presentation memory. The 448×280 rollback measures 35.2
-> FPS. Music also works, but is disabled by default because the
-> lightweight synthesized timbre is not a good fit for the small speaker. F18
+> FPS. The lightweight music baseline now works and sounds acceptable, but
+> remains disabled by default while candidates are compared inside real Doom.
+> The standalone player was retired after both music and a direct reference
+> tone were silent outside Doom's complete runtime lifecycle. F18
 > uses fixed asymmetric thumb zones, double-tap Use/Open, PWR tap/hold for
 > Fire and Escape, a short BOOT release for next weapon, and BOOT hold as a
 > strafe modifier for the LEFT/RIGHT zones. Alexander judged this combination
@@ -183,29 +185,62 @@ inherited display-oriented pause deadlocks at that boundary. This option uses
 a dedicated core-1 pause rendezvous, keeps DMA sources in SRAM, and then uses
 the Pico SDK lockout around each flash-sector erase/program operation.
 
-### Optional music build
+### Music
 
-The experimental fixed-memory music backend can be enabled without changing
-source code. Speaker mastering is enabled by default inside music builds: it
-uses smoother voices, music-only filtering and peak control, and short SFX
-ducking without changing the accepted effects path:
+The fixed-memory music backend is included in the normal handheld firmware.
+Sound effects start enabled and music starts muted, matching the preferred
+pocket experience. To opt in, open Doom's **Options** menu and raise
+**Music Volume**; no alternative firmware is required. A fresh boot restores
+the default effects-only balance. At volume zero the music generator is
+detached, so the synthesiser and continuous audio-buffer production consume no
+gameplay CPU time; the fixed music implementation still occupies about 1.3 KiB
+of SRAM because it remains available for immediate opt-in.
 
-> **Hardware status:** the current mastered candidate is rejected. It produced
-> intermittent distorted bursts rather than usable music during gameplay. Keep
-> `DOOM_ENABLE_MUSIC=OFF` for normal device builds while the fixed-memory OPL2
-> alternative is investigated.
+The accepted optional score uses the original lightweight synthesiser, with
+General MIDI percussion at 50% of its original level. The heavier mastered
+candidate remains rejected because it produced intermittent distorted bursts.
 
 ```sh
 cmake -S firmware -B firmware/build \
   -DCMAKE_BUILD_TYPE=Release \
-  -DDOOM_ENABLE_MUSIC=ON
+  -DDOOM_ENABLE_MUSIC=ON \
+  -DDOOM_MUSIC_SPEAKER_MASTERING=OFF
 cmake --build firmware/build --target doom -j4
 ```
 
-Return to the device default with `-DDOOM_ENABLE_MUSIC=OFF`.
-Set `-DDOOM_MUSIC_SPEAKER_MASTERING=OFF` only to reproduce the original harsh
-oscillator baseline. See [the music experiment](docs/MUSIC-QUALITY-EXPERIMENT.md)
-for measurements, alternatives, and the short listening protocol.
+For a smaller effects-only engineering build, configure
+`-DDOOM_ENABLE_MUSIC=OFF`; that removes the music backend entirely rather than
+merely muting it.
+
+For the controlled in-game smooth-synth comparison, keep mastering off and add
+`-DDOOM_MUSIC_SMOOTH_SYNTH=ON`. This changes only oscillator shapes,
+instrument-family mapping, and short note-edge gain ramps; sample rate, buffer
+size, codec configuration, volume, display, and controls remain unchanged.
+
+`DOOM_MUSIC_PERCUSSION_PERCENT` independently controls General MIDI channel
+10. Its accepted default is `50`, leaving tonal instruments and sound effects
+untouched.
+
+### Music listening builds
+
+Use full Doom for physical listening tests. This retains the real renderer
+load, core-1 servicing, sound effects, mixer, DMA queue and codec lifecycle,
+so sound quality and stability results represent the shipped experience.
+Start with `DOOM_ENABLE_MUSIC=ON`, `DOOM_MUSIC_SPEAKER_MASTERING=OFF`, and
+`DOOM_MUSIC_LAB=OFF` as the accepted audible rollback.
+
+The experimental lab code remains available for engineering reference and has
+four selectable profiles:
+
+- `0`: exact accepted 44.1kHz lightweight baseline;
+- `1`: cheap smooth voices, instrument-family mapping, and note-edge ramps;
+- `2`: profile 1 at 22.05kHz with 256-frame buffers;
+- `3`: profile 1 at 44.1kHz plus experimental ES8311 DAC DRC.
+
+Do not use those standalone images for product decisions: hardware testing
+found even their direct output-path reference tone silent. See
+[the music experiment](docs/MUSIC-QUALITY-EXPERIMENT.md) for the comparison
+protocol and why music remains off by default.
 
 ### Prepare the WAD data
 

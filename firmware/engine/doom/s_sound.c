@@ -97,11 +97,10 @@ int sfxVolume = 8;
 
 // Maximum volume of music.
 
-#if PICO_ON_DEVICE && DOOM_ENABLE_MUSIC && DOOM_MUSIC_SPEAKER_MASTERING
-// Start at Doom's proven audible level. The music-only peak control and SFX
-// ducking below provide headroom without pushing quiet passages under this
-// tiny speaker's practical threshold. The normal 0..15 menu control remains.
-int musicVolume = 8;
+#if PICO_ON_DEVICE && DOOM_ENABLE_MUSIC
+// Keep the synthesizer available through Doom's normal volume menu, but make
+// the pocket-device experience effects-only until the player opts into music.
+int musicVolume = 0;
 #else
 int musicVolume = 8;
 #endif

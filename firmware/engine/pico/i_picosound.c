@@ -54,7 +54,10 @@
 // Mono samples produced per I_Pico_UpdateSound() call. Two converted buffers
 // are owned by audio_pio's DMA queue; the mixer returns immediately when both
 // are occupied rather than stalling either render core on the I2S FIFO.
-#define MIX_BUFFER_SAMPLES 512
+#ifndef DOOM_AUDIO_BUFFER_SAMPLES
+#define DOOM_AUDIO_BUFFER_SAMPLES 512
+#endif
+#define MIX_BUFFER_SAMPLES DOOM_AUDIO_BUFFER_SAMPLES
 
 typedef struct channel_s channel_t;
 
