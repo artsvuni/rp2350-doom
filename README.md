@@ -1,3 +1,5 @@
+
+
 # DOOM on the RP2350-Touch-AMOLED-1.8
 
 ## Goal
@@ -8,6 +10,8 @@ using only the board's touchscreen and two onboard buttons—no keyboard,
 external controller, or display. The ambition is not just to prove the port
 runs, but to make combat controllable and the presentation smooth enough that
 finishing the game on this device feels realistic.
+
+https://github.com/user-attachments/assets/dcd0b361-e311-4bd8-bcb6-e084c511004b
 
 This project adapts Graham Sanderson's
 [RP2040/RP2350 DOOM port](https://github.com/kilograham/rp2040-doom) to the
